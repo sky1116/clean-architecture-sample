@@ -134,7 +134,7 @@ Repository **介面**由需要它的內圈持有；EF Core **實作**位於外�
    - `Authentication__Authority`：HTTPS OIDC 簽發者
    - `Authentication__Audience`：Token 必須符合的 API Audience
    - `TrustedAuthority__SigningKeyBase64`：至少 32 個隨機位元組的 Base64，**只與可信成績裁定端共享**
-   - `Database__BootstrapOnStart=true`：**僅限 Development**，對全新或已由 Migration 管理的資料庫套用三個已納管的 EF Core 版本化 Migration；正式環境絕不自動套用
+   - `Database__BootstrapOnStart=true`：**僅限 Development**，對全新或已由 Migration 管理的資料庫套用四個已納管的 EF Core 版本化 Migration；正式環境絕不自動套用
 
 4. 執行 `dotnet run --project src/Competition.Web/Competition.Web.csproj --environment Development`。
 5. 使用 `GET /health` 確認程序存活；其他受保護 API 需使用正式驗證的 Access Token。
@@ -158,7 +158,7 @@ python3 scripts/check_publication.py
 
 ## 明確保留的限制
 
-本專案是**教學型模組化單體**，不是完整的正式上線產品。目前不內建 OIDC 提供者、可信遊戲裁定端、完整反作弊機制、賽季結算排名快照、獨立部署並經生產驗證的 Webhook 接收服務、Exactly-once 訊息處理、Dead Letter 管理者重送工具或跨系統可靠投遞驗收。報名與成績寫入現已在 PostgreSQL 交易內重新呼叫 Domain 規則；判定時間是交易內的受信任 UTC Clock，不是 Commit 時間。若需要嚴格的資料庫提交時間截止線，或允許其他寫入者修改競賽期限，仍需額外設計與驗證。必須由成功執行的 CI 提供測試證據；CI 綠燈不等於所有安全性或書中原則都已取得最終簽核。**書中架構規則**與**本範例採用的工程實作策略**明確分開。
+本專案是**教學型模組化單體**，不是完整的正式上線產品。目前不內建 OIDC 提供者、可信遊戲裁定端、完整反作弊機制、賽季結算排名快照、獨立部署並經生產驗證的 Webhook 接收服務、Exactly-once 訊息處理、完整的生產環境營運操作介面或跨系統可靠投遞驗收。報名與成績寫入現已在 PostgreSQL 交易內重新呼叫 Domain 規則；判定時間是交易內的受信任 UTC Clock，不是 Commit 時間。若需要嚴格的資料庫提交時間截止線，或允許其他寫入者修改競賽期限，仍需額外設計與驗證。必須由成功執行的 CI 提供測試證據；CI 綠燈不等於所有安全性或書中原則都已取得最終簽核。**書中架構規則**與**本範例採用的工程實作策略**明確分開。
 
 ## 可選啟用的 Outbox 送達流程與限制
 
@@ -172,9 +172,9 @@ python3 scripts/check_publication.py
 - 若接收端已處理成功、但發送端在保存確認之前當機，租約到期後仍**可能再次投遞**。這是 **At-least-once 投遞嘗試**，不是 Exactly-once 保證。
 - 不跟隨 HTTP Redirect、只接受操作人員設定的 HTTPS 目標，也不將敏感資料或外部回應原文寫進 Log。
 
-**版本化 Migration：** 已納管 `BaseCompetition`、`DurableOutbox`、`InboxProjection` 三個 EF Core Migration。整合測試驗證全新建置、保留舊資料的版本升級、重複套用及 Model Snapshot 漂移。僅 Development 的 `Database__BootstrapOnStart=true` 現在呼叫 `MigrateAsync`，不再使用 `EnsureCreated`。**若舊開發資料庫原先由 `EnsureCreated` 建立，沒有 EF Migration History，應先備份並審查基準導入方式，不能直接破壞或清除資料。** 正式環境 Migration 必須由獨立部署流程審查套用，不能交給 Web 啟動自動變更。
+**版本化 Migration：** 已納管 `BaseCompetition`、`DurableOutbox`、`InboxProjection`、`OperatorRedriveAudit` 四個 EF Core Migration。整合測試驗證全新建置、保留舊資料的版本升級、重複套用及 Model Snapshot 漂移。僅 Development 的 `Database__BootstrapOnStart=true` 現在呼叫 `MigrateAsync`，不再使用 `EnsureCreated`。**若舊開發資料庫原先由 `EnsureCreated` 建立，沒有 EF Migration History，應先備份並審查基準導入方式，不能直接破壞或清除資料。** 正式環境 Migration 必須由獨立部署流程審查套用，不能交給 Web 啟動自動變更。
 
-目前已有 PostgreSQL 真實租約競爭、接手、過期 Token 拒絕、退避與 Dead Letter，以及 HTTP Handler 回應分類測試。但**尚未驗證獨立部署的正式外部接收服務，也還沒有完整的人工作業重送介面**。
+目前已有 PostgreSQL 真實租約競爭、接手、過期 Token 拒絕、退避與 Dead Letter，以及 HTTP Handler 回應分類測試。但**尚未驗證獨立部署的正式外部接收服務，也還沒有完整的營運監控／審批操作介面**。
 
 
 ## 已通過的完整 HTTP 情境測試
@@ -212,4 +212,15 @@ python3 scripts/check_publication.py
 真實 HTTP／PostgreSQL 測試涵蓋有效簽章、偽造與竄改拒絕、重送、內容衝突、亂序、停用端點、過大輸入；資料庫整合測試另涵蓋並發、重新啟動後重送與交易一致性。**Inbox 去重不等於跨服務 Exactly-once 保證，也不是正式外部網路環境驗收。**
 
 [最新 Inbox HTTP/PostgreSQL 成功紀錄：94 項測試](https://github.com/sky1116/clean-architecture-sample/actions/runs/39390851699)，包含 34 項 PostgreSQL 整合測試及其餘 60 項測試，文件檢查亦通過。數字僅適用於該 Commit。
+
+
+## 有權限控管的 Dead Letter 重送與稽核
+
+系統可選擇設定 `Outbox__RecoveryEnabled=true`（預設關閉），由具有已驗證 JWT 與 `competition-admin` 角色的管理者呼叫 `POST /api/operations/outbox/{eventId}/redrive`，並提交 8–300 字元的 JSON `Reason`。重送功能與背景發送器是否啟用分開控制。
+
+內圈 **Application Interactor** 驗證管理員身分與理由，並透過 Application Port 提出操作；外圈 **PostgreSQL Adapter** 鎖定事件、拒絕已發布／認領中／不屬於 Dead Letter 的資料，在同一交易將合法事件重新排入待送，並建立 `OutboxRecoveryAudit`，保存操作人員、原因、之前嘗試次數與時間。多位管理員同時操作，最多只能有一筆成功。**重送不會略過 Webhook 簽章，也不代表遠端一定會成功。**
+
+另外，Inbox 更正版本的狀態轉移現已移至無框架相依的 **Domain `ReceivedResultPolicy`**；Infrastructure 只取得現有投影、呼叫 Domain 計算下一狀態，再與 Inbox 收據原子性保存，不再自己維護第二套版本規則。
+
+API 與整合測試包含真實 JWT 授權、實際 HTTP、PostgreSQL 交易、未授權拒絕、只能重送一次、已送達事件不得重送，以及不可刪改的稽核資料。本範例仍不包含正式營運儀表板、審批流程、金鑰輪替或獨立部署驗收。
 
