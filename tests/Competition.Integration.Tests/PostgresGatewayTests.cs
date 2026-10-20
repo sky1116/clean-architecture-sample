@@ -11,8 +11,7 @@ namespace Competition.Integration.Tests;
 /// <summary>Real PostgreSQL: no in-memory provider, mocked uniqueness or fake transactions.</summary>
 public sealed class PostgresGatewayTests : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _database = new PostgreSqlBuilder()
-        .WithImage("postgres:17-alpine").Build();
+    private readonly PostgreSqlContainer _database = new PostgreSqlBuilder("postgres:17-alpine").Build();
     private DbContextOptions<CompetitionDbContext> _options = null!;
     private static readonly DateTimeOffset Now = new(2027, 1, 1, 12, 0, 0, TimeSpan.Zero);
 
