@@ -16,6 +16,12 @@ public sealed class WebStartupValidation(IConfiguration configuration) : IHosted
             throw new InvalidOperationException("OIDC authority and audience must be configured.");
 
         _ = ReadSigningKey(configuration);
+        if (configuration.GetValue<bool>("Inbox:Enabled"))
+            _ = Competition.Infrastructure.Delivery.WebhookSignature.ReadKey(
+                configuration["Inbox:WebhookSigningKeyBase64"]);
+        if (configuration.GetValue<bool>("Outbox:Enabled"))
+            _ = Competition.Infrastructure.Delivery.WebhookSignature.ReadKey(
+                configuration["Outbox:WebhookSigningKeyBase64"]);
         return Task.CompletedTask;
     }
 

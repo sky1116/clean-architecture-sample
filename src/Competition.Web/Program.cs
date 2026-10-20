@@ -21,6 +21,8 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddScoped<ICompetitionGateway, PostgresCompetitionGateway>();
 builder.Services.AddScoped<IEnrollmentGateway, PostgresEnrollmentGateway>();
 builder.Services.AddScoped<IResultGateway, PostgresResultGateway>();
+builder.Services.AddScoped<IResultInboxPort, PostgresResultInboxGateway>();
+builder.Services.AddScoped<IReceiveResultEventInputBoundary, ReceiveResultEventInteractor>();
 builder.Services.AddScoped<IResultCorrectionPort, PostgresCorrectionGateway>();
 builder.Services.AddScoped<IParticipantHistoryPort, PostgresParticipantHistoryGateway>();
 builder.Services.AddScoped<IResultUuidSource, RandomUuidSource>();
@@ -75,6 +77,15 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
+    options.AddPolicy("inbox", context => RateLimitPartition.GetFixedWindowLimiter(
+        "inbox:" + (context.Connection.RemoteIpAddress?.ToString() ?? "unknown"),
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 30,
+            Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0,
+            AutoReplenishment = true
+        }));
     options.AddPolicy("submissions", context => RateLimitPartition.GetFixedWindowLimiter(
         RequestRateLimitKey.From(context.User, context.Connection.RemoteIpAddress),
         _ => new FixedWindowRateLimiterOptions
@@ -176,6 +187,60 @@ app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
 app.MapGet("/health", () => Results.Ok(new { status = "alive" }));
+
+// This is a transport adapter, NOT a domain rule. HMAC authenticates the exact HTTP
+// body before JSON parsing. No request-supplied destination, secret or identity is trusted.
+app.MapPost("/api/integrations/result-events", async (
+    HttpRequest request, CompetitionController controller,
+    IConfiguration config, CancellationToken ct) =>
+{
+    if (!config.GetValue<bool>("Inbox:Enabled"))
+        return Results.NotFound();
+
+    const int maximumBytes = 8192;
+    if (request.ContentLength > maximumBytes)
+        return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+    if (request.ContentType is null ||
+        !request.ContentType.StartsWith("application/json", StringComparison.OrdinalIgnoreCase))
+        return Results.StatusCode(StatusCodes.Status415UnsupportedMediaType);
+
+    var signatureHeader = request.Headers["X-Webhook-Signature"];
+    if (signatureHeader.Count != 1)
+        return Results.Unauthorized();
+
+    using var buffer = new MemoryStream();
+    var chunk = new byte[1024];
+    while (true)
+    {
+        var read = await request.Body.ReadAsync(
+            chunk.AsMemory(0, Math.Min(chunk.Length, maximumBytes + 1 - (int)buffer.Length)), ct);
+        if (read == 0) break;
+        buffer.Write(chunk, 0, read);
+        if (buffer.Length > maximumBytes)
+            return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
+    }
+
+    // The key is separately provisioned by the operator. Never log its value.
+    var key = WebhookSignature.ReadKey(config["Inbox:WebhookSigningKeyBase64"]);
+    var bytes = buffer.ToArray();
+    if (!WebhookSignature.Verify(bytes, signatureHeader[0], key))
+        return Results.Unauthorized();
+
+    var eventHeader = request.Headers["X-Event-Id"];
+    var typeHeader = request.Headers["X-Event-Type"];
+    if (eventHeader.Count != 1 || !Guid.TryParse(eventHeader[0], out var eventId) ||
+        typeHeader.Count != 1)
+        return Results.UnprocessableEntity(new { code = "inbox.invalid_event" });
+
+    var input = InboundEventAdapter.Parse(bytes, eventId, typeHeader[0]);
+    if (input is null)
+        return Results.UnprocessableEntity(new { code = "inbox.invalid_event" });
+
+    var response = await controller.ReceiveAsync(input, ct);
+    return ToHttp(response);
+}).RequireRateLimiting("inbox");
+
+
 
 app.MapPost("/api/competitions", async (
     CreateCompetitionHttp request, CompetitionController controller, ClaimsPrincipal actor,
