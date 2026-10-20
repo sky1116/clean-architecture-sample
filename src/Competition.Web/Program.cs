@@ -1,5 +1,7 @@
 using Competition.Web;
 using System.Security.Claims;
+using System.Diagnostics;
+using Microsoft.AspNetCore.Diagnostics;
 using System.Threading.RateLimiting;
 using Competition.Adapters.Rest;
 using Competition.Application.Ports;
@@ -50,6 +52,21 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJw
     options.Authority = jwtAuthority;
     options.Audience = jwtAudience;
     options.RequireHttpsMetadata = true;
+    // Use the issuer of the already validated token, not a request-supplied identity hint.
+    options.Events = new JwtBearerEvents
+    {
+        OnTokenValidated = context =>
+        {
+            if (context.Principal?.Identity is ClaimsIdentity identity
+                && context.SecurityToken is { Issuer: var issuer })
+            {
+                var existing = identity.FindFirst("iss");
+                if (existing is not null) identity.RemoveClaim(existing);
+                identity.AddClaim(new Claim("iss", issuer));
+            }
+            return Task.CompletedTask;
+        }
+    };
 });
 builder.Services.AddAuthorization(options =>
 {
@@ -77,7 +94,9 @@ app.UseExceptionHandler(handler =>
     {
         var logger = context.RequestServices.GetRequiredService<ILoggerFactory>()
             .CreateLogger("ApplicationFailure");
-        logger.LogError("Request failed. TraceId={TraceId}", context.TraceIdentifier);
+        var error = context.Features.Get<IExceptionHandlerFeature>()?.Error;
+        logger.LogError(error, "Request failed. TraceId={TraceId}, FailureType={FailureType}",
+            context.TraceIdentifier, error?.GetType().Name);
         context.Response.StatusCode = 500;
         await Results.Problem(statusCode: 500, title: "Unexpected error",
             extensions: new Dictionary<string, object?> { ["traceId"] = context.TraceIdentifier })
@@ -96,6 +115,22 @@ else if (!app.Environment.IsDevelopment() && app.Configuration.GetValue<bool>("D
     throw new InvalidOperationException("Automatic schema bootstrap is forbidden outside Development.");
 }
 
+// Structured completion logs contain only route patterns, status, duration and trace correlation.
+app.Use(async (context, next) =>
+{
+    var clock = Stopwatch.StartNew();
+    try { await next(); }
+    finally
+    {
+        clock.Stop();
+        var log = context.RequestServices.GetRequiredService<ILoggerFactory>()
+            .CreateLogger("HttpRequests");
+        log.LogInformation(
+            "RequestCompleted Method={Method} Route={Route} StatusCode={StatusCode} DurationMs={DurationMs} TraceId={TraceId}",
+            context.Request.Method, context.GetEndpoint()?.DisplayName ?? "unmatched",
+            context.Response.StatusCode, clock.Elapsed.TotalMilliseconds, Activity.Current?.TraceId.ToString());
+    }
+});
 app.UseAuthentication();
 app.UseAuthorization();
 app.UseRateLimiter();
