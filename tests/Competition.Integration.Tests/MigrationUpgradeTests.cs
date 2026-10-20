@@ -67,4 +67,12 @@ public sealed class MigrationUpgradeTests : IAsyncLifetime
         }, (await context.Database.GetAppliedMigrationsAsync()).OrderBy(x => x).ToArray());
         Assert.Empty(await context.PendingEvents.ToArrayAsync());
     }
+    [Fact]
+    public void Checked_in_snapshot_must_match_the_current_EF_model()
+    {
+        using var context = Open();
+        Assert.False(context.Database.HasPendingModelChanges(),
+            "A domain/persistence model change requires a reviewed migration and an updated snapshot.");
+    }
+
 }
