@@ -38,3 +38,16 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Transaction, uniqueness and replay tests against PostgreSQL
         run: dotnet test tests/Competition.Integration.Tests/Competition.Integration.Tests.csproj --configuration Release
+
+  documentation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate three language entry points and diagrams
+        run: |
+          python3 scripts/check_docs.py
+          python3 scripts/check_docs.py --self-test
+      - name: Validate local database Compose syntax
+        env:
+          POSTGRES_PASSWORD: docs-only-placeholder
+        run: docker compose config --quiet
