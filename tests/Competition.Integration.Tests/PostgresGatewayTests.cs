@@ -28,6 +28,24 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
 
     private CompetitionDbContext Context() => new(_options);
 
+    private sealed class FixedClock(DateTimeOffset? at = null) : IUtcClock
+    {
+        public DateTimeOffset UtcNow => at ?? Now;
+    }
+
+    private async Task SeedContestAsync(Guid competitionId, params Guid[] participantIds)
+    {
+        await using var context = Context();
+        Assert.True(await new PostgresCompetitionGateway(context).CreateAsync(
+            Competition.Domain.Competitions.Competition.Schedule(
+                competitionId, "Seeded competition", Now.AddDays(-1),
+                Now.AddDays(1), 100), CancellationToken.None));
+        var enrollment = new PostgresEnrollmentGateway(context);
+        foreach (var participantId in participantIds)
+            Assert.Equal(EnrollmentWriteStatus.Created, await enrollment.RegisterAsync(
+                competitionId, participantId, CancellationToken.None));
+    }
+
     [Fact]
     public async Task Accepting_once_commits_result_receipt_and_audit_atomically()
     {
@@ -48,13 +66,13 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
         var receipt = VerifiedResult.Create(Guid.NewGuid(), contestId, actorId, 80, Now, "trusted-a");
         await using (var context = Context())
         {
-            var result = await new PostgresResultGateway(context).AppendAsync(
+            var result = await new PostgresResultGateway(context, new FixedClock()).AppendAsync(
                 receipt, "same-request", "AABB", CancellationToken.None);
             Assert.Equal(ResultWriteStatus.Created, result.Status);
         }
         await using (var context = Context())
         {
-            var result = await new PostgresResultGateway(context).AppendAsync(
+            var result = await new PostgresResultGateway(context, new FixedClock()).AppendAsync(
                 VerifiedResult.Create(Guid.NewGuid(), contestId, actorId, 80, Now, "trusted-a"),
                 "same-request", "AABB", CancellationToken.None);
             Assert.Equal(ResultWriteStatus.Replayed, result.Status);
@@ -71,16 +89,17 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
     {
         var contestId = Guid.NewGuid();
         var actorId = Guid.NewGuid();
+        await SeedContestAsync(contestId, actorId);
         await using (var context = Context())
         {
-            var gateway = new PostgresResultGateway(context);
+            var gateway = new PostgresResultGateway(context, new FixedClock());
             var accepted = VerifiedResult.Create(Guid.NewGuid(), contestId, actorId, 42, Now, "proof-1");
             Assert.Equal(ResultWriteStatus.Created,
                 (await gateway.AppendAsync(accepted, "request-123", "hash-one", CancellationToken.None)).Status);
         }
         await using (var context = Context())
         {
-            var gateway = new PostgresResultGateway(context);
+            var gateway = new PostgresResultGateway(context, new FixedClock());
             var changed = VerifiedResult.Create(Guid.NewGuid(), contestId, actorId, 99, Now, "proof-2");
             Assert.Equal(ResultWriteStatus.Conflict,
                 (await gateway.AppendAsync(changed, "request-123", "different-hash", CancellationToken.None)).Status);
@@ -102,11 +121,12 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
     {
         var contestId = Guid.NewGuid();
         var actorId = Guid.NewGuid();
+        await SeedContestAsync(contestId, actorId);
         async Task<ResultWriteOutcome> Write()
         {
             await using var context = Context();
             var candidate = VerifiedResult.Create(Guid.NewGuid(), contestId, actorId, 12, Now, "proof-parallel");
-            return await new PostgresResultGateway(context).AppendAsync(
+            return await new PostgresResultGateway(context, new FixedClock()).AppendAsync(
                 candidate, "parallel-key", "fingerprint", CancellationToken.None);
         }
 
@@ -123,16 +143,19 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
     public async Task Evidence_cannot_be_replayed_across_two_participants_in_same_competition()
     {
         var competitionId = Guid.NewGuid();
+        var firstActor = Guid.NewGuid();
+        var secondActor = Guid.NewGuid();
+        await SeedContestAsync(competitionId, firstActor, secondActor);
         await using (var context = Context())
         {
-            var first = VerifiedResult.Create(Guid.NewGuid(), competitionId, Guid.NewGuid(), 20, Now, "unique-evidence");
-            Assert.Equal(ResultWriteStatus.Created, (await new PostgresResultGateway(context).AppendAsync(
+            var first = VerifiedResult.Create(Guid.NewGuid(), competitionId, firstActor, 20, Now, "unique-evidence");
+            Assert.Equal(ResultWriteStatus.Created, (await new PostgresResultGateway(context, new FixedClock()).AppendAsync(
                 first, "request-first", "first", CancellationToken.None)).Status);
         }
         await using (var context = Context())
         {
-            var other = VerifiedResult.Create(Guid.NewGuid(), competitionId, Guid.NewGuid(), 20, Now, "unique-evidence");
-            Assert.Equal(ResultWriteStatus.Conflict, (await new PostgresResultGateway(context).AppendAsync(
+            var other = VerifiedResult.Create(Guid.NewGuid(), competitionId, secondActor, 20, Now, "unique-evidence");
+            Assert.Equal(ResultWriteStatus.Conflict, (await new PostgresResultGateway(context, new FixedClock()).AppendAsync(
                 other, "request-other", "second", CancellationToken.None)).Status);
         }
     }
@@ -141,11 +164,12 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
     {
         var competitionId = Guid.NewGuid();
         var participantId = Guid.NewGuid();
+        await SeedContestAsync(competitionId, participantId);
         var original = VerifiedResult.Create(Guid.NewGuid(), competitionId, participantId, 65,
             Now, "evidence-to-correct");
         await using (var context = Context())
         {
-            Assert.Equal(ResultWriteStatus.Created, (await new PostgresResultGateway(context)
+            Assert.Equal(ResultWriteStatus.Created, (await new PostgresResultGateway(context, new FixedClock())
                 .AppendAsync(original, "original-key", "original-fingerprint", CancellationToken.None)).Status);
         }
         await using (var context = Context())
@@ -167,7 +191,7 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
         }
         await using (var context = Context())
         {
-            var effective = await new PostgresResultGateway(context).ReadCompetitionAsync(
+            var effective = await new PostgresResultGateway(context, new FixedClock()).ReadCompetitionAsync(
                 competitionId, CancellationToken.None);
             Assert.Single(effective);
             Assert.Equal(55, effective[0].Points);
@@ -191,11 +215,12 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
     {
         var competitionId = Guid.NewGuid();
         var participantId = Guid.NewGuid();
+        await SeedContestAsync(competitionId, participantId);
         var result = VerifiedResult.Create(Guid.NewGuid(), competitionId, participantId, 60,
             Now, "concurrent-correction-proof");
         await using (var context = Context())
         {
-            Assert.Equal(ResultWriteStatus.Created, (await new PostgresResultGateway(context)
+            Assert.Equal(ResultWriteStatus.Created, (await new PostgresResultGateway(context, new FixedClock())
                 .AppendAsync(result, "correction-base", "fingerprint-base", CancellationToken.None)).Status);
         }
 
@@ -214,7 +239,7 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
         await using var verified = Context();
         Assert.Equal(1, await verified.Corrections.CountAsync(x => x.ResultId == result.Id));
         Assert.Equal(2, await verified.AuditEntries.CountAsync(x => x.ResultId == result.Id));
-        var latest = await new PostgresResultGateway(verified).ReadCompetitionAsync(competitionId, CancellationToken.None);
+        var latest = await new PostgresResultGateway(verified, new FixedClock()).ReadCompetitionAsync(competitionId, CancellationToken.None);
         Assert.Single(latest);
         Assert.Contains(latest[0].Points, new[] { 32, 47 });
         Assert.Equal(60, (await verified.Results.SingleAsync(x => x.Id == result.Id)).Points);
@@ -225,13 +250,14 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
     {
         var competitionId = Guid.NewGuid();
         var actorId = Guid.NewGuid();
+        await SeedContestAsync(competitionId, actorId);
 
         async Task<ResultWriteOutcome> Write(string key)
         {
             await using var context = Context();
             var proposed = VerifiedResult.Create(Guid.NewGuid(), competitionId, actorId, 15,
                 Now, "shared-proof-identity");
-            return await new PostgresResultGateway(context).AppendAsync(
+            return await new PostgresResultGateway(context, new FixedClock()).AppendAsync(
                 proposed, key, key + "-fingerprint", CancellationToken.None);
         }
 
@@ -251,10 +277,11 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
         var one = Guid.NewGuid();
         var two = Guid.NewGuid();
         var player = Guid.NewGuid();
+        await SeedContestAsync(one, player);
         var result = VerifiedResult.Create(Guid.NewGuid(), one, player, 12, Now, "proof-isolated");
         await using (var context = Context())
         {
-            Assert.Equal(ResultWriteStatus.Created, (await new PostgresResultGateway(context)
+            Assert.Equal(ResultWriteStatus.Created, (await new PostgresResultGateway(context, new FixedClock())
                 .AppendAsync(result, "isolation-request", "isolation-fingerprint", CancellationToken.None)).Status);
         }
         await using (var context = Context())
@@ -268,6 +295,63 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
             Assert.Empty(await new PostgresParticipantHistoryGateway(context).ReadAsync(
                 two, player, CancellationToken.None));
             Assert.Equal(0, await context.Corrections.CountAsync());
+        }
+    }
+
+    [Fact]
+    public async Task Transaction_rechecks_cutoff_and_rejects_a_result_after_end()
+    {
+        var competitionId = Guid.NewGuid();
+        var actor = Guid.NewGuid();
+        await SeedContestAsync(competitionId, actor);
+        await using var context = Context();
+        var result = VerifiedResult.Create(Guid.NewGuid(), competitionId, actor, 42, Now, "late-proof");
+        var rejected = await new PostgresResultGateway(context, new FixedClock(Now.AddDays(2)))
+            .AppendAsync(result, "expired-request", "fingerprint", CancellationToken.None);
+        Assert.Equal(ResultWriteStatus.CompetitionClosed, rejected.Status);
+        Assert.Empty(await context.Results.ToListAsync());
+        Assert.Empty(await context.AuditEntries.ToListAsync());
+        Assert.Empty(await context.PendingEvents.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Write_transaction_rechecks_enrollment_against_the_authoritative_database()
+    {
+        var competitionId = Guid.NewGuid();
+        await SeedContestAsync(competitionId);
+        var actor = Guid.NewGuid();
+        await using var context = Context();
+        var rejected = await new PostgresResultGateway(context, new FixedClock())
+            .AppendAsync(VerifiedResult.Create(Guid.NewGuid(), competitionId, actor, 70, Now,
+                "unenrolled-proof"), "unenrolled-request", "fingerprint", CancellationToken.None);
+        Assert.Equal(ResultWriteStatus.NotEnrolled, rejected.Status);
+        Assert.Empty(await context.Results.ToListAsync());
+        Assert.Empty(await context.RequestReceipts.ToListAsync());
+        Assert.Empty(await context.AuditEntries.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Replaying_an_accepted_request_after_the_cutoff_is_read_only()
+    {
+        var competitionId = Guid.NewGuid();
+        var actor = Guid.NewGuid();
+        await SeedContestAsync(competitionId, actor);
+        await using (var context = Context())
+        {
+            var accepted = await new PostgresResultGateway(context, new FixedClock())
+                .AppendAsync(VerifiedResult.Create(Guid.NewGuid(), competitionId, actor, 25, Now,
+                    "proof-on-time"), "replay-key", "fingerprint", CancellationToken.None);
+            Assert.Equal(ResultWriteStatus.Created, accepted.Status);
+        }
+        await using (var context = Context())
+        {
+            var replayed = await new PostgresResultGateway(context, new FixedClock(Now.AddDays(3)))
+                .AppendAsync(VerifiedResult.Create(Guid.NewGuid(), competitionId, actor, 25, Now,
+                    "proof-on-time"), "replay-key", "fingerprint", CancellationToken.None);
+            Assert.Equal(ResultWriteStatus.Replayed, replayed.Status);
+            Assert.Single(await context.Results.ToListAsync());
+            Assert.Single(await context.AuditEntries.ToListAsync());
+            Assert.Single(await context.PendingEvents.ToListAsync());
         }
     }
 
