@@ -10,7 +10,8 @@ public sealed class CompetitionController(
     IGetLeaderboardInputBoundary leaderboard,
     IGetPersonalHistoryInputBoundary history,
     ICorrectResultInputBoundary correction,
-    IReceiveResultEventInputBoundary inbox)
+    IReceiveResultEventInputBoundary inbox,
+    IRedriveOutboxInputBoundary outboxRecovery)
 {
     public async Task<ApiViewModel> CreateAsync(CreateCompetitionInput input, CancellationToken cancellationToken)
     {
@@ -37,6 +38,14 @@ public sealed class CompetitionController(
     {
         var presenter = new RestPresenter();
         await leaderboard.ExecuteAsync(input, presenter, cancellationToken);
+        return presenter.ViewModel!;
+    }
+
+    public async Task<ApiViewModel> RedriveAsync(
+        RedriveOutboxInput input, CancellationToken cancellationToken)
+    {
+        var presenter = new RestPresenter();
+        await outboxRecovery.ExecuteAsync(input, presenter, cancellationToken);
         return presenter.ViewModel!;
     }
 

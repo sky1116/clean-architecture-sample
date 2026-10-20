@@ -22,6 +22,8 @@ builder.Services.AddScoped<ICompetitionGateway, PostgresCompetitionGateway>();
 builder.Services.AddScoped<IEnrollmentGateway, PostgresEnrollmentGateway>();
 builder.Services.AddScoped<IResultGateway, PostgresResultGateway>();
 builder.Services.AddScoped<IResultInboxPort, PostgresResultInboxGateway>();
+builder.Services.AddScoped<IOutboxRecoveryPort, PostgresOutboxRecoveryGateway>();
+builder.Services.AddScoped<IRedriveOutboxInputBoundary, RedriveOutboxInteractor>();
 builder.Services.AddScoped<IReceiveResultEventInputBoundary, ReceiveResultEventInteractor>();
 builder.Services.AddScoped<IResultCorrectionPort, PostgresCorrectionGateway>();
 builder.Services.AddScoped<IParticipantHistoryPort, PostgresParticipantHistoryGateway>();
@@ -77,6 +79,13 @@ builder.Services.AddAuthorization(options =>
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
+    options.AddPolicy("operator-recovery", context => RateLimitPartition.GetFixedWindowLimiter(
+        RequestRateLimitKey.From(context.User, context.Connection.RemoteIpAddress),
+        _ => new FixedWindowRateLimiterOptions
+        {
+            PermitLimit = 5, Window = TimeSpan.FromMinutes(1),
+            QueueLimit = 0, AutoReplenishment = true
+        }));
     options.AddPolicy("inbox", context => RateLimitPartition.GetFixedWindowLimiter(
         "inbox:" + (context.Connection.RemoteIpAddress?.ToString() ?? "unknown"),
         _ => new FixedWindowRateLimiterOptions
@@ -242,6 +251,21 @@ app.MapPost("/api/integrations/result-events", async (
 
 
 
+// Redrive is an explicitly enabled, authenticated administrative Use Case.
+// Never expose table-row reset as an anonymous or GET operation.
+app.MapPost("/api/operations/outbox/{eventId:guid}/redrive", async (
+    Guid eventId, RedriveOutboxHttp request, CompetitionController controller,
+    ClaimsPrincipal actor, IConfiguration config, CancellationToken ct) =>
+{
+    if (!config.GetValue<bool>("Outbox:RecoveryEnabled"))
+        return Results.NotFound();
+
+    var response = await controller.RedriveAsync(new RedriveOutboxInput(
+        eventId, ActorIdentity.FromPrincipal(actor), actor.IsInRole("competition-admin"),
+        request.Reason), ct);
+    return ToHttp(response);
+}).RequireAuthorization("competition-admin").RequireRateLimiting("operator-recovery");
+
 app.MapPost("/api/competitions", async (
     CreateCompetitionHttp request, CompetitionController controller, ClaimsPrincipal actor,
     CancellationToken ct) =>
@@ -303,5 +327,6 @@ static IResult ToHttp(ApiViewModel response) => new HttpApiResult(response);
 
 public sealed record CreateCompetitionHttp(string Name, DateTimeOffset StartsAt, DateTimeOffset EndsAt, int MaximumPoints);
 public sealed record SubmitResultHttp(string OpaqueEvidence);
+public sealed record RedriveOutboxHttp(string Reason);
 public sealed record CorrectResultHttp(int ExpectedRevision, int ReplacementPoints, string Reason);
 public partial class Program;
