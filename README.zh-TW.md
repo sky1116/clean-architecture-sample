@@ -94,3 +94,68 @@ Repository **介面**由需要它的內圈持有；EF Core **實作**位於外�
 ## 範圍邊界
 
 採用單體模組化架構示範明確分層。沒有可信的成績來源就無法保證玩家沒有作弊；不能保證跨系統訊息真正 Exactly Once；也不將任何特定框架誤認為書中規定。以可執行、可驗證的證據優先。
+
+## 目前實作的 HTTP 契約
+
+| 路由 | 授權 | 行為 |
+| --- | --- | --- |
+| `POST /api/competitions` | OIDC 登入並具有 competition-admin 角色 | 建立具期間與計分上限的競賽 |
+| `POST /api/competitions/{id}/participants` | OIDC 登入 | 依已驗證身分報名，不採用請求自行宣稱的參賽者身分 |
+| `POST /api/competitions/{id}/results` | OIDC 登入、限流 | 必須傳入 `Idempotency-Key` 和 `OpaqueEvidence`；只有可信證據能寫入成績 |
+| `POST /api/competitions/{id}/results/{resultId}/corrections` | competition-admin 角色 | 寫入保留版本與理由的稽核更正 |
+| `GET /api/competitions/{id}/leaderboard` | 公開 | 依最新有效成績（含更正）產生排名 |
+| `GET /api/competitions/{id}/me/history` | OIDC 登入 | 僅查詢本人原始成績與更正歷程 |
+| `GET /health` | 公開 | 僅代表程序存活，**不代表資料庫可用** |
+
+### 成績來源與完整性
+
+**可信收據 Adapter** 會驗證 HMAC 簽章，綁定競賽、參賽者、分數、證據識別碼及簽發／到期時間。簽章密鑰只能由**獨立可信的成績裁定端**保管，絕不能交給玩家、瀏覽器或手機 App。簽章只能證明聲明來自特定簽發端，**不能單獨證明遊戲過程沒有作弊**；本範例不包含完整遊戲伺服器或證據簽發器。
+
+冪等鍵與請求證據綁定。PostgreSQL Adapter 在**同一交易**寫入正式成績、冪等收據及業務稽核紀錄。唯一約束保護重播與並發寫入。更正以新增版本與稽核決策方式處理，不覆蓋原始成績。排行榜採最新有效版本，個人歷史保留所有版本。
+
+越權、無效證據、相同冪等鍵卻不同內容，以及過期的更正版本，都不能冒充成功。這些行為使用真正 PostgreSQL Docker 容器進行整合測試，而不是僅用 Mock。
+
+### Log、Trace 與正式稽核
+
+- **Operational Log**：只記錄 HTTP 結果、處理時間、Trace 關聯及穩定的結果代碼，不記錄證據原文、JWT 或簽章密鑰。
+- **Tracing / Metrics**：OpenTelemetry 只配置在最外層 Web Driver；預設**不對外傳送**，設定 `Telemetry__ExportOtlp=true` 並提供 Collector 端點才會啟用。
+- **Business Audit**：成績接受與更正歷程寫入 PostgreSQL，和業務交易一起 Commit。Log **不能取代**正式稽核紀錄。
+- **CA 邊界**：Entities 與 Interactors 不引用 `ILogger` 或 OpenTelemetry。
+
+## 本地執行
+
+需要 .NET 10 SDK、Docker，以及**另外配置的 OIDC 身分提供者**。本範例不提供預設管理者帳號、提交至 Git 的密鑰或略過驗證的捷徑。
+
+1. 在本機設定強密碼 `POSTGRES_PASSWORD`，可複製 `.env.example` 為不追蹤的 `.env`。
+2. 執行 `docker compose up -d postgres`。
+3. 透過環境變數提供：
+
+   - `ConnectionStrings__Competitions`：包含本機 PostgreSQL 密碼的連線字串
+   - `Authentication__Authority`：HTTPS OIDC 簽發者
+   - `Authentication__Audience`：Token 必須符合的 API Audience
+   - `TrustedAuthority__SigningKeyBase64`：至少 32 個隨機位元組的 Base64，**只與可信成績裁定端共享**
+   - `Database__BootstrapOnStart=true`：**僅限 Development**，只供建立全新範例 Schema，不代表正式 Migration
+
+4. 執行 `dotnet run --project src/Competition.Web/Competition.Web.csproj --environment Development`。
+5. 使用 `GET /health` 確認程序存活；其他受保護 API 需使用正式驗證的 Access Token。
+
+提交的 `OpaqueEvidence` 必須由可信端簽發；自行修改 JSON 不會獲得有效成績。請勿將 Token、密碼、真實位址或密鑰放入 Git／Log。
+
+## 完整驗證指令
+
+```bash
+dotnet test tests/Competition.Domain.Tests/Competition.Domain.Tests.csproj -c Release
+dotnet test tests/Competition.Application.Tests/Competition.Application.Tests.csproj -c Release
+dotnet test tests/Competition.Adapters.Tests/Competition.Adapters.Tests.csproj -c Release
+dotnet test tests/Competition.Infrastructure.Tests/Competition.Infrastructure.Tests.csproj -c Release
+dotnet test tests/Competition.Web.Tests/Competition.Web.Tests.csproj -c Release
+dotnet test tests/Competition.Architecture.Tests/Competition.Architecture.Tests.csproj -c Release
+dotnet test tests/Competition.Integration.Tests/Competition.Integration.Tests.csproj -c Release
+python3 scripts/check_publication.py
+```
+
+整合測試使用真正的暫時性 PostgreSQL 容器，驗證交易、並發提交、重播、唯一約束、同時更正以及資料隔離。CI 將整合測試與不依賴資料庫的單元／架構測試分開執行。
+
+## 明確保留的限制
+
+本專案是**教學型模組化單體**，不是完整的正式上線產品。目前不內建 OIDC 提供者、可信遊戲裁定端、正式資料庫 Migration、完整反作弊機制、賽季結算排名快照、Transactional Outbox 或分散式訊息傳送。正式使用前，報名／成績提交與截止時間之間的競態也需要更嚴格的交易內驗證。必須由成功執行的 CI 提供測試證據；CI 綠燈不等於所有安全性或書中原則都已取得最終簽核。**書中架構規則**與**本範例採用的工程實作策略**明確分開。

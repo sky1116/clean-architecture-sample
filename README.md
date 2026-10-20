@@ -90,3 +90,68 @@ Requires .NET 10 SDK and Docker for PostgreSQL integration tests. Follow the wor
 ## Non-goals and guarantees
 
 This is a **modular monolith** teaching explicit boundaries. It does not promise proof that a player truly achieved a score without a trusted evidence source, guarantee exactly-once message delivery, or claim that a particular technology is required by the book. Working examples and verified behavior take priority over speculative abstractions.
+
+## Implemented HTTP contract
+
+| Route | Authentication | Outcome |
+| --- | --- | --- |
+| `POST /api/competitions` | Valid OIDC token, competition-admin role | Creates a bounded, immutable competition policy |
+| `POST /api/competitions/{id}/participants` | Valid OIDC token | Registers the authenticated participant, not a submitted participant identifier |
+| `POST /api/competitions/{id}/results` | Valid OIDC token, rate limited | Requires `Idempotency-Key` header and `OpaqueEvidence`; accepts only verified evidence |
+| `POST /api/competitions/{id}/results/{resultId}/corrections` | competition-admin role | Applies an audited, version-checked correction |
+| `GET /api/competitions/{id}/leaderboard` | Public | Ranking is computed from current effective results (including corrections) |
+| `GET /api/competitions/{id}/me/history` | Valid OIDC token | Only returns the authenticated participant's original decisions and corrections |
+| `GET /health` | Public | Process liveness only; **not** database readiness |
+
+### Result provenance and integrity
+
+The sample's **trusted-receipt adapter** checks an HMAC signature over encoded authority claims (competition, participant, points, evidence identifier, issued/expiry timestamps). The signing secret must belong **only to an independent trusted authority**, never the browser, player or mobile game. A signed claim attests to the issuer, **not independently to the correctness of gameplay**; this sample deliberately does not include a complete game server or evidence issuer.
+
+The request key is bound to the submitted proof. The PostgreSQL adapter writes the accepted result, idempotency receipt and decision audit **in one transaction**. Unique constraints on the receipt and evidence ID defend against replay, including concurrent calls. A correction appends a revision plus an audit decision without overwriting the original result; an effective-score query considers the newest revision. Personal history returns original and correction entries.
+
+Failures are not silently converted to success: unauthorized requests are rejected by HTTP authorization and Use Case guards; invalid evidence never reaches persistence; duplicate keys with different payloads conflict; stale correction revisions conflict. PostgreSQL integration tests exercise these behaviors with an actual Docker database.
+
+### Operational logs, traces and business audit
+
+- **Operational logs:** HTTP completion, duration, status, trace correlation and stable outcome code; never raw proof, JWT or signing keys.
+- **Tracing and metrics:** OpenTelemetry is configured exclusively in the Web driver. Export through OTLP is **disabled by default** and opt-in with `Telemetry__ExportOtlp=true` plus exporter endpoint configuration.
+- **Business audit:** PostgreSQL's append-only accepted-result and correction decision records are committed with their business transaction. An operational log is **not** a substitute for this audit.
+- **Separation:** Entities and Interactors neither depend on `ILogger` nor import OpenTelemetry libraries.
+
+## Try it locally
+
+Prerequisites: .NET 10 SDK, Docker for PostgreSQL, and a **separate OIDC identity provider** issuing valid access tokens. The sample does not include a default admin login, an in-repository signing key or a developer bypass for authentication.
+
+1. Set a strong `POSTGRES_PASSWORD` locally (for example in an untracked `.env`; copy `.env.example` first).
+2. Run `docker compose up -d postgres`.
+3. Provide the following **environment variables** outside source control:
+
+   - `ConnectionStrings__Competitions`: PostgreSQL connection string using the locally chosen password
+   - `Authentication__Authority`: HTTPS OIDC issuer URL
+   - `Authentication__Audience`: API audience expected in validated tokens
+   - `TrustedAuthority__SigningKeyBase64`: base64 of at least 32 random secret bytes, shared **only with the trusted result issuer**
+   - `Database__BootstrapOnStart=true`: **Development only**, creates a new schema on startup; not a migration strategy
+
+4. Run `dotnet run --project src/Competition.Web/Competition.Web.csproj --environment Development`.
+5. Call `GET /health` to check liveness; authenticate against your configured issuer for protected endpoints.
+
+The `OpaqueEvidence` in submissions must be a valid **authority-issued receipt**; fabricating JSON client-side is intentionally rejected. `Database__BootstrapOnStart` is forbidden outside Development. Keep real tokens, secrets and private host addresses out of source control and logs.
+
+## Run every verification gate
+
+```bash
+dotnet test tests/Competition.Domain.Tests/Competition.Domain.Tests.csproj -c Release
+dotnet test tests/Competition.Application.Tests/Competition.Application.Tests.csproj -c Release
+dotnet test tests/Competition.Adapters.Tests/Competition.Adapters.Tests.csproj -c Release
+dotnet test tests/Competition.Infrastructure.Tests/Competition.Infrastructure.Tests.csproj -c Release
+dotnet test tests/Competition.Web.Tests/Competition.Web.Tests.csproj -c Release
+dotnet test tests/Competition.Architecture.Tests/Competition.Architecture.Tests.csproj -c Release
+dotnet test tests/Competition.Integration.Tests/Competition.Integration.Tests.csproj -c Release
+python3 scripts/check_publication.py
+```
+
+The integration suite starts disposable real PostgreSQL containers and covers transactions, parallel submissions, replay, unique constraints, concurrent corrections, rollback classification and participant/competition isolation. CI runs it **separately** from deterministic unit/architecture tests.
+
+## Explicit limitations and next work
+
+This project is an educational modular monolith, **not a finished production service**. In particular, it does not bundle an OIDC provider, game authority/issuer, versioned migrations, comprehensive anti-cheat checks, historical finalized leaderboard snapshots, an outbox/background processor or fault-tolerant distributed delivery. Registration and result expiry race windows require further transaction-bound policies before production use. Only a passing CI run supports claims about executed tests, and a green CI check does not establish complete security or book-level conformity. This separation between **the book's dependency principles** and **our engineering choices** is intentional.

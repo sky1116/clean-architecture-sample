@@ -94,3 +94,68 @@ CI の成功を確認するまでは、**全テスト PASS と主張しません
 ## 非目標
 
 明確な境界を持つモジュラーモノリスを扱います。信頼できる証拠がない限りスコアの真実性を保証できず、メッセージ配送の Exactly Once も保証しません。実装とテストで確認できる事実を優先します。
+
+## 実装済みの HTTP 契約
+
+| ルート | 認証／認可 | 実装された動作 |
+| --- | --- | --- |
+| `POST /api/competitions` | OIDC + competition-admin ロール | 開催期間・得点上限を持つ大会を作成 |
+| `POST /api/competitions/{id}/participants` | OIDC | 検証済みの本人として参加登録 |
+| `POST /api/competitions/{id}/results` | OIDC + レート制限 | `Idempotency-Key` と `OpaqueEvidence` が必要 |
+| `POST /api/competitions/{id}/results/{resultId}/corrections` | competition-admin ロール | バージョン検証付きの監査可能な訂正 |
+| `GET /api/competitions/{id}/leaderboard` | 公開 | 訂正を反映した有効得点から順位を算出 |
+| `GET /api/competitions/{id}/me/history` | OIDC | 本人の原本と訂正履歴のみ表示 |
+| `GET /health` | 公開 | プロセスの生存のみ確認。**DB の正常性を保証しません** |
+
+### 記録の信頼性と整合性
+
+**信頼できる証明書（receipt）の Adapter** は HMAC 署名を検証し、大会、参加者、得点、証明 ID、発行／有効期限を紐付けます。署名秘密鍵は**独立した信頼できる判定サーバーのみ**が保持し、プレイヤー・ブラウザー・モバイルアプリに渡してはいけません。署名が証明するのは発行元であり、**ゲーム内の不正行為がなかったこと自体ではありません**。本サンプルにゲームの判定サーバーや証拠の発行機能は含まれません。
+
+冪等キーは要求の証拠と結び付きます。PostgreSQL Adapter は承認された結果、冪等処理の記録、業務監査履歴を**同じトランザクション**で保存します。一意制約で再送と並行実行を防御します。訂正は原本を上書きせず、版数と監査イベントを追加します。ランキングには最新版を反映し、個人履歴にはすべての版を残します。
+
+権限のない要求、不正な証拠、同じキーで異なる内容、古い訂正版数は成功扱いにしません。実際の PostgreSQL Docker コンテナーで統合テストを実施します。
+
+### ログ・トレース・業務監査
+
+- **運用ログ**：HTTP の結果、処理時間、Trace 相関、安定した結果コードのみ。証拠原文、JWT、署名鍵を出力しません。
+- **Tracing / Metrics**：OpenTelemetry は Web Driver のみで構成し、外部送信は**既定で無効**。`Telemetry__ExportOtlp=true` と Collector の設定で有効化します。
+- **業務監査**：結果承認と訂正の履歴は PostgreSQL にトランザクションとともに保存します。運用ログは監査記録の代わりにはなりません。
+- **CA 境界**：Entities と Interactors は `ILogger` や OpenTelemetry に依存しません。
+
+## ローカルで実行する
+
+.NET 10 SDK、Docker、**外部の OIDC ID プロバイダー**が必要です。初期管理者、リポジトリに保存された署名鍵、認証を回避する仕組みは用意しません。
+
+1. 安全な `POSTGRES_PASSWORD` をローカルで設定します。追跡されない `.env` は `.env.example` から作成できます。
+2. `docker compose up -d postgres` を実行します。
+3. 次の値を**環境変数**として設定します。
+
+   - `ConnectionStrings__Competitions`：ローカル PostgreSQL への接続文字列
+   - `Authentication__Authority`：HTTPS の OIDC Issuer URL
+   - `Authentication__Audience`：検証対象の API Audience
+   - `TrustedAuthority__SigningKeyBase64`：最低 32 バイトのランダムな秘密情報を Base64 化したもの。**信頼された判定端末以外と共有しません**
+   - `Database__BootstrapOnStart=true`：**Development 専用**の初期スキーマ作成。正式な Migration ではありません
+
+4. `dotnet run --project src/Competition.Web/Competition.Web.csproj --environment Development` を実行します。
+5. `GET /health` でプロセスの生存を確認します。保護対象 API は検証済み Access Token が必要です。
+
+`OpaqueEvidence` は信頼された判定元が発行した署名付き証明でなければなりません。クライアント側で任意の JSON を作っても承認されません。トークン、鍵、パスワードや私的なホスト名を Git やログに含めないでください。
+
+## 全検証コマンド
+
+```bash
+dotnet test tests/Competition.Domain.Tests/Competition.Domain.Tests.csproj -c Release
+dotnet test tests/Competition.Application.Tests/Competition.Application.Tests.csproj -c Release
+dotnet test tests/Competition.Adapters.Tests/Competition.Adapters.Tests.csproj -c Release
+dotnet test tests/Competition.Infrastructure.Tests/Competition.Infrastructure.Tests.csproj -c Release
+dotnet test tests/Competition.Web.Tests/Competition.Web.Tests.csproj -c Release
+dotnet test tests/Competition.Architecture.Tests/Competition.Architecture.Tests.csproj -c Release
+dotnet test tests/Competition.Integration.Tests/Competition.Integration.Tests.csproj -c Release
+python3 scripts/check_publication.py
+```
+
+統合テストは実際の一時 PostgreSQL コンテナーを使用し、トランザクション、並行登録、再送、一意制約、訂正競合、情報の分離を確認します。CI では単体／アーキテクチャテストと DB 統合テストを別ジョブに分けています。
+
+## 明示的な限界と今後の課題
+
+このプロジェクトは**教育用モジュラーモノリス**であり、本番稼働が完成しているわけではありません。OIDC 提供者、信頼されたゲーム判定／発行サービス、本番 DB Migration、完全な不正検知、確定時点のランキング Snapshot、Transactional Outbox、分散メッセージ処理は含まれません。参加登録や提出締切の競合については、本番導入の前にトランザクション内の追加対策が必要です。テスト結果は成功した CI の実行記録に基づいてのみ主張できます。緑の CI は完全な安全性や書籍への完全な適合証明ではありません。**書籍の依存性ルール**と**本サンプル独自の実務的な選択**を明確に区別しています。
