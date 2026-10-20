@@ -44,14 +44,14 @@ public sealed class MigrationUpgradeTests : IAsyncLifetime
         await context.SaveChangesAsync();
 
         await migrator.MigrateAsync();
-        Assert.Equal(3, (await context.Database.GetAppliedMigrationsAsync()).Count());
+        Assert.Equal(4, (await context.Database.GetAppliedMigrationsAsync()).Count());
         var persisted = await context.Competitions.AsNoTracking().SingleAsync(x => x.Id == id);
         Assert.Equal("Keep historical records", persisted.Name);
         Assert.Empty(await context.PendingEvents.ToListAsync());
 
         // Reapplying to the latest target must be safe and preserve both migration records.
         await migrator.MigrateAsync();
-        Assert.Equal(3, (await context.Database.GetAppliedMigrationsAsync()).Count());
+        Assert.Equal(4, (await context.Database.GetAppliedMigrationsAsync()).Count());
         Assert.Equal(1, await context.Competitions.CountAsync());
     }
 
@@ -64,11 +64,13 @@ public sealed class MigrationUpgradeTests : IAsyncLifetime
         {
             "20261020140100_BaseCompetition",
             "20261020140200_DurableOutbox",
-            "20261020140300_InboxProjection"
+            "20261020140300_InboxProjection",
+            "20261020140400_OperatorRedriveAudit"
         }, (await context.Database.GetAppliedMigrationsAsync()).OrderBy(x => x).ToArray());
         Assert.Empty(await context.PendingEvents.ToArrayAsync());
         Assert.Empty(await context.InboxReceipts.ToArrayAsync());
         Assert.Empty(await context.ReceivedResults.ToArrayAsync());
+        Assert.Empty(await context.OutboxRecoveryAudits.ToArrayAsync());
     }
     [Fact]
     public void Checked_in_snapshot_must_match_the_current_EF_model()

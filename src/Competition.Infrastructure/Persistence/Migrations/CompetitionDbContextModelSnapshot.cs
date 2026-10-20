@@ -124,6 +124,22 @@ public sealed class CompetitionDbContextModelSnapshot : ModelSnapshot
             entity.ToTable("ReceivedResults");
         });
 
+        modelBuilder.Entity<OutboxRecoveryAuditRow>(entity =>
+        {
+            entity.Property<Guid>(nameof(OutboxRecoveryAuditRow.Id))
+                .ValueGeneratedOnAdd().HasColumnType("uuid");
+            entity.Property<Guid>(nameof(OutboxRecoveryAuditRow.EventId)).HasColumnType("uuid");
+            entity.Property<Guid>(nameof(OutboxRecoveryAuditRow.AdministratorId)).HasColumnType("uuid");
+            entity.Property<string>(nameof(OutboxRecoveryAuditRow.Reason)).IsRequired()
+                .HasMaxLength(300).HasColumnType("character varying(300)");
+            entity.Property<int>(nameof(OutboxRecoveryAuditRow.PreviousAttempts)).HasColumnType("integer");
+            entity.Property<DateTimeOffset>(nameof(OutboxRecoveryAuditRow.OccurredAt))
+                .HasColumnType("timestamp with time zone");
+            entity.HasKey(x => x.Id);
+            entity.HasIndex(x => new { x.EventId, x.OccurredAt });
+            entity.ToTable("OutboxRecoveryAudits");
+        });
+
         modelBuilder.Entity<OutboxRow>(entity =>
         {
             entity.Property<Guid>(nameof(OutboxRow.Id)).ValueGeneratedOnAdd().HasColumnType("uuid");
