@@ -4,7 +4,8 @@
     <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
     <PackageReference Include="xunit" Version="2.9.3" />
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
-    <PackageReference Include="Testcontainers.PostgreSql" Version="4.6.0" />
+    <PackageReference Include="Testcontainers.PostgreSql" Version="4.16.0" />
+    <PackageReference Include="SSH.NET" Version="2026.0.0" />
     <ProjectReference Include="../../src/Competition.Infrastructure/Competition.Infrastructure.csproj" />
   </ItemGroup>
 </Project>
