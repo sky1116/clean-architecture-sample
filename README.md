@@ -154,7 +154,7 @@ The integration suite starts disposable real PostgreSQL containers and covers tr
 
 ## Explicit limitations and next work
 
-This project is an educational modular monolith, **not a finished production service**. In particular, it does not bundle an OIDC provider, game authority/issuer, versioned migrations, comprehensive anti-cheat checks, historical finalized leaderboard snapshots, an outbox dispatcher/background processor or fault-tolerant distributed delivery (only the transactional event recording is implemented). Registration and result expiry race windows require further transaction-bound policies before production use. Only a passing CI run supports claims about executed tests, and a green CI check does not establish complete security or book-level conformity. This separation between **the book's dependency principles** and **our engineering choices** is intentional.
+This project is an educational modular monolith, **not a finished production service**. In particular, it does not bundle an OIDC provider, game authority/issuer, versioned migrations, comprehensive anti-cheat checks, historical finalized leaderboard snapshots, a proven production webhook receiver, exactly-once event processing, operator dead-letter redrive tools, or fault-tolerant multi-system delivery. Registration and result expiry race windows require further transaction-bound policies before production use. Only a passing CI run supports claims about executed tests, and a green CI check does not establish complete security or book-level conformity. This separation between **the book's dependency principles** and **our engineering choices** is intentional.
 
 ## Opt-in Outbox delivery: semantics and operations
 
