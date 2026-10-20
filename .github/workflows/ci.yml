@@ -16,7 +16,11 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - name: Domain tests
-        run: dotnet test tests/Competition.Domain.Tests/Competition.Domain.Tests.csproj --configuration Release
+      - name: Domain and use case tests
+        run: |
+          dotnet test tests/Competition.Domain.Tests/Competition.Domain.Tests.csproj --configuration Release
+          dotnet test tests/Competition.Application.Tests/Competition.Application.Tests.csproj --configuration Release
       - name: Publication hygiene
+        env:
+          PUBLICATION_RESTRICTED_TERMS: ${{ secrets.PUBLICATION_RESTRICTED_TERMS }}
         run: python3 scripts/check_publication.py

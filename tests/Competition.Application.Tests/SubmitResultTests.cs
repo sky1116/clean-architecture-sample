@@ -1,0 +1,119 @@
+using Competition.Application.Ports;
+using Competition.Application.UseCases;
+using Competition.Domain.Competitions;
+using Competition.Domain.Results;
+using Xunit;
+
+namespace Competition.Application.Tests;
+
+public sealed class SubmitResultTests
+{
+    private static readonly DateTimeOffset Start = new(2027, 1, 1, 0, 0, 0, TimeSpan.Zero);
+    private sealed class Clock : IUtcClock { public DateTimeOffset UtcNow => Start.AddMinutes(2); }
+    private sealed class Ids : IResultIdGenerator { public Guid Next() => Guid.Parse("00000000-0000-0000-0000-000000000099"); }
+    private sealed class Presenter : ISubmitResultOutputBoundary
+    {
+        public SubmitResultOutput? Response { get; private set; }
+        public void Present(SubmitResultOutput response) => Response = response;
+    }
+    private sealed class Competitions : ICompetitionGateway
+    {
+        public Task<Competition.Domain.Competitions.Competition?> FindAsync(Guid id, CancellationToken cancellationToken) =>
+            Task.FromResult<Competition.Domain.Competitions.Competition?>(
+                Competition.Domain.Competitions.Competition.Schedule(id, "Contest", Start, Start.AddDays(1), 100));
+        public Task<bool> CreateAsync(Competition.Domain.Competitions.Competition competition, CancellationToken cancellationToken)
+            => Task.FromResult(true);
+    }
+    private sealed class Enrollments : IEnrollmentGateway
+    {
+        public bool IsEnrolled { get; init; } = true;
+        public Task<bool> ExistsAsync(Guid competitionId, Guid participantId, CancellationToken cancellationToken)
+            => Task.FromResult(IsEnrolled);
+        public Task<EnrollmentWriteStatus> RegisterAsync(Guid competitionId, Guid participantId, CancellationToken cancellationToken)
+            => Task.FromResult(EnrollmentWriteStatus.Created);
+    }
+    private sealed class Evidence : IResultEvidencePort
+    {
+        public bool IsValid { get; init; } = true;
+        public int Points { get; init; } = 80;
+        public Task<VerifiedEvidence?> VerifyAsync(Guid competitionId, Guid participantId, string opaqueEvidence,
+            CancellationToken cancellationToken) => Task.FromResult<VerifiedEvidence?>(
+                IsValid ? new(Points, "trusted-001") : null);
+    }
+    private sealed class Results : IResultGateway
+    {
+        public int Writes { get; private set; }
+        public ResultWriteStatus Status { get; init; } = ResultWriteStatus.Created;
+        public Task<ResultWriteOutcome> AppendAsync(VerifiedResult proposed, string key, string fingerprint,
+            CancellationToken cancellationToken)
+        {
+            Writes++;
+            return Task.FromResult(new ResultWriteOutcome(Status,
+                Status == ResultWriteStatus.Conflict ? null : proposed));
+        }
+        public Task<IReadOnlyList<VerifiedResult>> ReadCompetitionAsync(Guid competitionId, CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<VerifiedResult>>(Array.Empty<VerifiedResult>());
+        public Task<IReadOnlyList<VerifiedResult>> ReadParticipantAsync(Guid competitionId, Guid participantId,
+            CancellationToken cancellationToken)
+            => Task.FromResult<IReadOnlyList<VerifiedResult>>(Array.Empty<VerifiedResult>());
+    }
+
+    private static async Task<(string? Code, int Writes)> ExecuteAsync(Enrollments? enrollment = null,
+        Evidence? evidence = null, Results? results = null, Guid? actor = null)
+    {
+        var gateway = results ?? new Results();
+        var presenter = new Presenter();
+        var useCase = new SubmitResultInteractor(new Competitions(), enrollment ?? new Enrollments(),
+            evidence ?? new Evidence(), gateway, new Clock(), new Ids());
+        await useCase.ExecuteAsync(new SubmitResultInput(Guid.NewGuid(), actor ?? Guid.NewGuid(),
+            "request-1234", "trusted-proof"), presenter, CancellationToken.None);
+        return (presenter.Response?.Code, gateway.Writes);
+    }
+
+    [Fact]
+    public async Task Trusted_enrolled_result_is_written_once()
+    {
+        var actual = await ExecuteAsync();
+        Assert.Equal("result.accepted", actual.Code);
+        Assert.Equal(1, actual.Writes);
+    }
+
+    [Fact]
+    public async Task Untrusted_evidence_never_enters_the_ledger()
+    {
+        var actual = await ExecuteAsync(evidence: new Evidence { IsValid = false });
+        Assert.Equal("result.untrusted_evidence", actual.Code);
+        Assert.Equal(0, actual.Writes);
+    }
+
+    [Fact]
+    public async Task Unenrolled_participants_cannot_submit()
+    {
+        var actual = await ExecuteAsync(enrollment: new Enrollments { IsEnrolled = false });
+        Assert.Equal("participant.not_enrolled", actual.Code);
+        Assert.Equal(0, actual.Writes);
+    }
+
+    [Fact]
+    public async Task Server_checked_score_outside_policy_is_rejected()
+    {
+        var actual = await ExecuteAsync(evidence: new Evidence { Points = 101 });
+        Assert.Equal("result.points_out_of_range", actual.Code);
+        Assert.Equal(0, actual.Writes);
+    }
+
+    [Fact]
+    public async Task Same_key_with_different_payload_produces_conflict()
+    {
+        var actual = await ExecuteAsync(results: new Results { Status = ResultWriteStatus.Conflict });
+        Assert.Equal("result.idempotency_conflict", actual.Code);
+    }
+
+    [Fact]
+    public async Task Missing_authenticated_actor_never_writes()
+    {
+        var actual = await ExecuteAsync(actor: Guid.Empty);
+        Assert.Equal("actor.unauthenticated", actual.Code);
+        Assert.Equal(0, actual.Writes);
+    }
+}
