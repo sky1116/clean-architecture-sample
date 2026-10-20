@@ -183,4 +183,89 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
         }
     }
 
+    [Fact]
+    public async Task Simultaneous_corrections_cannot_both_claim_the_same_revision()
+    {
+        var competitionId = Guid.NewGuid();
+        var participantId = Guid.NewGuid();
+        var result = VerifiedResult.Create(Guid.NewGuid(), competitionId, participantId, 60,
+            Now, "concurrent-correction-proof");
+        await using (var context = Context())
+        {
+            Assert.Equal(ResultWriteStatus.Created, (await new PostgresResultGateway(context)
+                .AppendAsync(result, "correction-base", "fingerprint-base", CancellationToken.None)).Status);
+        }
+
+        async Task<CorrectionOutcome> Correct(int points)
+        {
+            await using var context = Context();
+            return await new PostgresCorrectionGateway(context).AppendAsync(
+                competitionId, result.Id, Guid.NewGuid(), 0, points,
+                "Independent referee verification", Now.AddMinutes(1), CancellationToken.None);
+        }
+
+        var outcomes = await Task.WhenAll(Task.Run(() => Correct(32)), Task.Run(() => Correct(47)));
+        Assert.Single(outcomes, x => x.Status == CorrectionStatus.Applied);
+        Assert.Single(outcomes, x => x.Status == CorrectionStatus.VersionConflict);
+
+        await using var verified = Context();
+        Assert.Equal(1, await verified.Corrections.CountAsync(x => x.ResultId == result.Id));
+        Assert.Equal(2, await verified.AuditEntries.CountAsync(x => x.ResultId == result.Id));
+        var latest = await new PostgresResultGateway(verified).ReadCompetitionAsync(competitionId, CancellationToken.None);
+        Assert.Single(latest);
+        Assert.Contains(latest[0].Points, new[] { 32, 47 });
+        Assert.Equal(60, (await verified.Results.SingleAsync(x => x.Id == result.Id)).Points);
+    }
+
+    [Fact]
+    public async Task Concurrent_proof_replay_with_distinct_request_keys_writes_only_once()
+    {
+        var competitionId = Guid.NewGuid();
+        var actorId = Guid.NewGuid();
+
+        async Task<ResultWriteOutcome> Write(string key)
+        {
+            await using var context = Context();
+            var proposed = VerifiedResult.Create(Guid.NewGuid(), competitionId, actorId, 15,
+                Now, "shared-proof-identity");
+            return await new PostgresResultGateway(context).AppendAsync(
+                proposed, key, key + "-fingerprint", CancellationToken.None);
+        }
+
+        var outcomes = await Task.WhenAll(Task.Run(() => Write("request-key-a")),
+            Task.Run(() => Write("request-key-b")));
+        Assert.Single(outcomes, x => x.Status == ResultWriteStatus.Created);
+        Assert.Single(outcomes, x => x.Status == ResultWriteStatus.Conflict);
+        await using var verified = Context();
+        Assert.Equal(1, await verified.Results.CountAsync(x => x.CompetitionId == competitionId));
+        Assert.Equal(1, await verified.RequestReceipts.CountAsync(x => x.CompetitionId == competitionId));
+        Assert.Equal(1, await verified.AuditEntries.CountAsync(x => x.CompetitionId == competitionId));
+    }
+
+    [Fact]
+    public async Task Corrections_do_not_cross_competition_or_participant_boundaries()
+    {
+        var one = Guid.NewGuid();
+        var two = Guid.NewGuid();
+        var player = Guid.NewGuid();
+        var result = VerifiedResult.Create(Guid.NewGuid(), one, player, 12, Now, "proof-isolated");
+        await using (var context = Context())
+        {
+            Assert.Equal(ResultWriteStatus.Created, (await new PostgresResultGateway(context)
+                .AppendAsync(result, "isolation-request", "isolation-fingerprint", CancellationToken.None)).Status);
+        }
+        await using (var context = Context())
+        {
+            var correction = await new PostgresCorrectionGateway(context).AppendAsync(
+                two, result.Id, Guid.NewGuid(), 0, 90, "Trying an invalid cross-competition correction",
+                Now.AddMinutes(1), CancellationToken.None);
+            Assert.Equal(CorrectionStatus.NotFound, correction.Status);
+            Assert.Empty(await new PostgresParticipantHistoryGateway(context).ReadAsync(
+                one, Guid.NewGuid(), CancellationToken.None));
+            Assert.Empty(await new PostgresParticipantHistoryGateway(context).ReadAsync(
+                two, player, CancellationToken.None));
+            Assert.Equal(0, await context.Corrections.CountAsync());
+        }
+    }
+
 }
