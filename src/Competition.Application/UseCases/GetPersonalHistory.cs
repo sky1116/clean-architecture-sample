@@ -4,7 +4,8 @@ namespace Competition.Application.UseCases;
 
 public sealed record GetPersonalHistoryInput(Guid CompetitionId, Guid AuthenticatedParticipantId,
     int Offset = 0, int Limit = 20);
-public sealed record HistoryEntryRow(Guid ResultId, int Points, DateTimeOffset RecordedAt);
+public sealed record HistoryEntryRow(Guid EventId, Guid ResultId, string Action, int Points,
+    int Revision, DateTimeOffset OccurredAt, string? Reason);
 public sealed record GetPersonalHistoryOutput(string Code, IReadOnlyList<HistoryEntryRow> Entries, int TotalCount);
 
 public interface IGetPersonalHistoryInputBoundary
@@ -15,7 +16,7 @@ public interface IGetPersonalHistoryInputBoundary
 public interface IGetPersonalHistoryOutputBoundary { void Present(GetPersonalHistoryOutput response); }
 
 public sealed class GetPersonalHistoryInteractor(ICompetitionGateway competitions,
-    IResultGateway results) : IGetPersonalHistoryInputBoundary
+    IParticipantHistoryPort history) : IGetPersonalHistoryInputBoundary
 {
     public async Task ExecuteAsync(GetPersonalHistoryInput input, IGetPersonalHistoryOutputBoundary output,
         CancellationToken cancellationToken)
@@ -36,11 +37,12 @@ public sealed class GetPersonalHistoryInteractor(ICompetitionGateway competition
             output.Present(new("competition.not_found", Array.Empty<HistoryEntryRow>(), 0));
             return;
         }
-        var journal = await results.ReadParticipantAsync(input.CompetitionId,
-            input.AuthenticatedParticipantId, cancellationToken);
-        var ordered = journal.OrderByDescending(x => x.RecordedAt).ThenBy(x => x.Id).ToArray();
+        var events = await history.ReadAsync(input.CompetitionId, input.AuthenticatedParticipantId,
+            cancellationToken);
+        var ordered = events.OrderByDescending(x => x.OccurredAt).ThenBy(x => x.EventId).ToArray();
         var rows = ordered.Skip(input.Offset).Take(input.Limit).Select(x =>
-            new HistoryEntryRow(x.Id, x.Points, x.RecordedAt)).ToArray();
+            new HistoryEntryRow(x.EventId, x.ResultId, x.Action, x.Points, x.Revision,
+                x.OccurredAt, x.Reason)).ToArray();
         output.Present(new("history.ready", rows, ordered.Length));
     }
 }
