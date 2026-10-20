@@ -9,7 +9,8 @@ public sealed class CompetitionController(
     ISubmitResultInputBoundary submission,
     IGetLeaderboardInputBoundary leaderboard,
     IGetPersonalHistoryInputBoundary history,
-    ICorrectResultInputBoundary correction)
+    ICorrectResultInputBoundary correction,
+    IReceiveResultEventInputBoundary inbox)
 {
     public async Task<ApiViewModel> CreateAsync(CreateCompetitionInput input, CancellationToken cancellationToken)
     {
@@ -36,6 +37,14 @@ public sealed class CompetitionController(
     {
         var presenter = new RestPresenter();
         await leaderboard.ExecuteAsync(input, presenter, cancellationToken);
+        return presenter.ViewModel!;
+    }
+
+    public async Task<ApiViewModel> ReceiveAsync(
+        ReceiveResultEventInput input, CancellationToken cancellationToken)
+    {
+        var presenter = new RestPresenter();
+        await inbox.ExecuteAsync(input, presenter, cancellationToken);
         return presenter.ViewModel!;
     }
 

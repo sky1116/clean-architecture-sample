@@ -9,7 +9,7 @@ public sealed record ApiViewModel(int StatusCode, string Code, object? Data = nu
 public sealed class RestPresenter :
     ICreateCompetitionOutputBoundary, IRegisterParticipantOutputBoundary,
     ISubmitResultOutputBoundary, IGetLeaderboardOutputBoundary, IGetPersonalHistoryOutputBoundary,
-    ICorrectResultOutputBoundary
+    ICorrectResultOutputBoundary, IReceiveResultEventOutputBoundary
 {
     public ApiViewModel? ViewModel { get; private set; }
 
@@ -23,6 +23,9 @@ public sealed class RestPresenter :
     public void Present(SubmitResultOutput value) =>
         ViewModel = new ApiViewModel(Status(value.Code), value.Code,
             value.ResultId is null ? null : new { value.ResultId, value.VerifiedPoints });
+
+    public void Present(ReceiveResultEventOutput value) =>
+        ViewModel = new ApiViewModel(Status(value.Code), value.Code);
 
     public void Present(CorrectResultOutput value) =>
         ViewModel = new ApiViewModel(Status(value.Code), value.Code,
@@ -38,6 +41,11 @@ public sealed class RestPresenter :
 
     private static int Status(string code) => code switch
     {
+        "inbox.applied" => 202,
+        "inbox.duplicate" => 200,
+        "inbox.dependency_missing" => 503,
+        "inbox.conflict" => 409,
+        "inbox.invalid_event" => 422,
         "competition.created" or "registration.accepted" or "result.accepted" => 201,
         "result.replayed" or "leaderboard.ready" or "history.ready"
             or "result.correction_applied" => 200,
