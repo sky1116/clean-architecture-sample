@@ -96,6 +96,34 @@ public sealed class CompetitionDbContextModelSnapshot : ModelSnapshot
             entity.ToTable("Corrections");
         });
 
+        modelBuilder.Entity<InboxReceiptRow>(entity =>
+        {
+            entity.Property<Guid>(nameof(InboxReceiptRow.EventId)).ValueGeneratedOnAdd().HasColumnType("uuid");
+            entity.Property<Guid>(nameof(InboxReceiptRow.CompetitionId)).HasColumnType("uuid");
+            entity.Property<Guid>(nameof(InboxReceiptRow.ResultId)).HasColumnType("uuid");
+            entity.Property<int>(nameof(InboxReceiptRow.Revision)).HasColumnType("integer");
+            entity.Property<string>(nameof(InboxReceiptRow.EventType)).IsRequired()
+                .HasMaxLength(100).HasColumnType("character varying(100)");
+            entity.Property<string>(nameof(InboxReceiptRow.PayloadDigest)).IsRequired()
+                .HasMaxLength(64).HasColumnType("character varying(64)");
+            entity.Property<DateTimeOffset>(nameof(InboxReceiptRow.ReceivedAt))
+                .HasColumnType("timestamp with time zone");
+            entity.HasKey(x => x.EventId);
+            entity.HasIndex(x => new { x.CompetitionId, x.ResultId, x.Revision }).IsUnique();
+            entity.ToTable("InboxReceipts");
+        });
+
+        modelBuilder.Entity<ReceivedResultRow>(entity =>
+        {
+            entity.Property<Guid>(nameof(ReceivedResultRow.CompetitionId)).HasColumnType("uuid");
+            entity.Property<Guid>(nameof(ReceivedResultRow.ResultId)).HasColumnType("uuid");
+            entity.Property<Guid>(nameof(ReceivedResultRow.ParticipantId)).HasColumnType("uuid");
+            entity.Property<int>(nameof(ReceivedResultRow.EffectivePoints)).HasColumnType("integer");
+            entity.Property<int>(nameof(ReceivedResultRow.Revision)).HasColumnType("integer");
+            entity.HasKey(x => new { x.CompetitionId, x.ResultId });
+            entity.ToTable("ReceivedResults");
+        });
+
         modelBuilder.Entity<OutboxRow>(entity =>
         {
             entity.Property<Guid>(nameof(OutboxRow.Id)).ValueGeneratedOnAdd().HasColumnType("uuid");
