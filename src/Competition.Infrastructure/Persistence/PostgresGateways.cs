@@ -1,4 +1,5 @@
 using Competition.Application.Ports;
+using System.Data;
 using Competition.Domain.Competitions;
 using Competition.Domain.Results;
 using Microsoft.EntityFrameworkCore;
@@ -133,9 +134,20 @@ public sealed class PostgresResultGateway(CompetitionDbContext database) : IResu
     public async Task<IReadOnlyList<VerifiedResult>> ReadCompetitionAsync(Guid competitionId,
         CancellationToken cancellationToken)
     {
+        await using var snapshot = await database.Database.BeginTransactionAsync(
+            IsolationLevel.RepeatableRead, cancellationToken);
         var rows = await database.Results.AsNoTracking().Where(x => x.CompetitionId == competitionId)
             .ToListAsync(cancellationToken);
-        return rows.Select(ToDomain).ToArray();
+        var revisions = await database.Corrections.AsNoTracking().Where(x => x.CompetitionId == competitionId)
+            .ToListAsync(cancellationToken);
+        var latest = revisions.GroupBy(x => x.ResultId).ToDictionary(x => x.Key,
+            x => x.MaxBy(c => c.Revision)!);
+        var effective = rows.Select(x => latest.TryGetValue(x.Id, out var revision)
+            ? VerifiedResult.Create(x.Id, x.CompetitionId, x.ParticipantId, revision.ReplacementPoints,
+                x.RecordedAt, x.EvidenceId)
+            : ToDomain(x)).ToArray();
+        await snapshot.CommitAsync(cancellationToken);
+        return effective;
     }
 
     public async Task<IReadOnlyList<VerifiedResult>> ReadParticipantAsync(Guid competitionId, Guid participantId,

@@ -10,6 +10,7 @@ public sealed class CompetitionDbContext(DbContextOptions<CompetitionDbContext> 
     public DbSet<ResultRow> Results => Set<ResultRow>();
     public DbSet<RequestReceiptRow> RequestReceipts => Set<RequestReceiptRow>();
     public DbSet<AuditRow> AuditEntries => Set<AuditRow>();
+    public DbSet<CorrectionRow> Corrections => Set<CorrectionRow>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -35,6 +36,13 @@ public sealed class CompetitionDbContext(DbContextOptions<CompetitionDbContext> 
             builder.HasKey(x => new { x.CompetitionId, x.ParticipantId, x.IdempotencyKey });
             builder.Property(x => x.IdempotencyKey).HasMaxLength(100).IsRequired();
             builder.Property(x => x.Fingerprint).HasMaxLength(64).IsRequired();
+        });
+        model.Entity<CorrectionRow>(builder =>
+        {
+            builder.HasKey(x => x.Id);
+            builder.HasIndex(x => new { x.ResultId, x.Revision }).IsUnique();
+            builder.HasIndex(x => new { x.CompetitionId, x.OccurredAt });
+            builder.Property(x => x.Reason).HasMaxLength(500).IsRequired();
         });
         model.Entity<AuditRow>(builder =>
         {
@@ -81,5 +89,17 @@ public sealed class AuditRow
     public Guid ParticipantId { get; set; }
     public Guid ResultId { get; set; }
     public string Action { get; set; } = "";
+    public DateTimeOffset OccurredAt { get; set; }
+}
+
+public sealed class CorrectionRow
+{
+    public Guid Id { get; set; }
+    public Guid CompetitionId { get; set; }
+    public Guid ResultId { get; set; }
+    public Guid AdministratorId { get; set; }
+    public int Revision { get; set; }
+    public int ReplacementPoints { get; set; }
+    public string Reason { get; set; } = "";
     public DateTimeOffset OccurredAt { get; set; }
 }

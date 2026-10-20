@@ -15,11 +15,14 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddScoped<ICompetitionGateway, PostgresCompetitionGateway>();
 builder.Services.AddScoped<IEnrollmentGateway, PostgresEnrollmentGateway>();
 builder.Services.AddScoped<IResultGateway, PostgresResultGateway>();
+builder.Services.AddScoped<IResultCorrectionPort, PostgresCorrectionGateway>();
+builder.Services.AddScoped<IParticipantHistoryPort, PostgresParticipantHistoryGateway>();
 builder.Services.AddScoped<IResultUuidSource, RandomUuidSource>();
 builder.Services.AddSingleton<IUtcClock, SystemUtcClock>();
 builder.Services.AddScoped<ICreateCompetitionInputBoundary, CreateCompetitionInteractor>();
 builder.Services.AddScoped<IRegisterParticipantInputBoundary, RegisterParticipantInteractor>();
 builder.Services.AddScoped<ISubmitResultInputBoundary, SubmitResultInteractor>();
+builder.Services.AddScoped<ICorrectResultInputBoundary, CorrectResultInteractor>();
 builder.Services.AddScoped<IGetLeaderboardInputBoundary, GetLeaderboardInteractor>();
 builder.Services.AddScoped<IGetPersonalHistoryInputBoundary, GetPersonalHistoryInteractor>();
 builder.Services.AddScoped<CompetitionController>();
@@ -126,6 +129,16 @@ app.MapPost("/api/competitions/{competitionId:guid}/results", async (
     return ToHttp(response);
 }).RequireAuthorization().RequireRateLimiting("submissions");
 
+app.MapPost("/api/competitions/{competitionId:guid}/results/{resultId:guid}/corrections", async (
+    Guid competitionId, Guid resultId, CorrectResultHttp request, CompetitionController controller,
+    ClaimsPrincipal actor, CancellationToken ct) =>
+{
+    var response = await controller.CorrectAsync(new CorrectResultInput(
+        competitionId, resultId, ActorIdentity.FromPrincipal(actor), actor.IsInRole("competition-admin"),
+        request.ExpectedRevision, request.ReplacementPoints, request.Reason), ct);
+    return ToHttp(response);
+}).RequireAuthorization("competition-admin");
+
 app.MapGet("/api/competitions/{competitionId:guid}/leaderboard", async (
     Guid competitionId, int? offset, int? limit, CompetitionController controller, CancellationToken ct) =>
 {
@@ -150,4 +163,5 @@ static IResult ToHttp(ApiViewModel response) =>
 
 public sealed record CreateCompetitionHttp(string Name, DateTimeOffset StartsAt, DateTimeOffset EndsAt, int MaximumPoints);
 public sealed record SubmitResultHttp(string OpaqueEvidence);
+public sealed record CorrectResultHttp(int ExpectedRevision, int ReplacementPoints, string Reason);
 public partial class Program;
