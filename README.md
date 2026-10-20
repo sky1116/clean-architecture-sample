@@ -155,3 +155,20 @@ The integration suite starts disposable real PostgreSQL containers and covers tr
 ## Explicit limitations and next work
 
 This project is an educational modular monolith, **not a finished production service**. In particular, it does not bundle an OIDC provider, game authority/issuer, versioned migrations, comprehensive anti-cheat checks, historical finalized leaderboard snapshots, an outbox dispatcher/background processor or fault-tolerant distributed delivery (only the transactional event recording is implemented). Registration and result expiry race windows require further transaction-bound policies before production use. Only a passing CI run supports claims about executed tests, and a green CI check does not establish complete security or book-level conformity. This separation between **the book's dependency principles** and **our engineering choices** is intentional.
+
+## Opt-in Outbox delivery: semantics and operations
+
+The sample now implements an **optional HTTPS webhook dispatcher** in the outer Web driver, backed by a replaceable HTTP sink and PostgreSQL delivery state:
+
+- Enable by setting `Outbox__Enabled=true` and `Outbox__WebhookUrl=https://your-trusted-receiver.example/events`. No network delivery occurs when disabled.
+- A PostgreSQL claim transaction uses `FOR UPDATE SKIP LOCKED`, a time-limited lease and a random lease token. Multiple workers can compete without intentionally claiming the same pending row.
+- The dispatcher posts a versioned JSON envelope including stable `EventId`, `EventType` and an `Idempotency-Key` header. **The receiver must persistently deduplicate `EventId`**.
+- Successful HTTP 2xx permits the worker to acknowledge the row; HTTP 408 / 429 / 5xx and transport errors are retryable. Other 4xx responses are terminal.
+- Transient failures use increasing bounded backoff; after five unsuccessful claims the event enters a **Dead Letter** state for explicit operator review.
+- If a process fails after the receiver accepts an event but before the acknowledgment commits, the lease expires and the event may be **delivered again**. Therefore this design provides **at-least-once attempts**, never guaranteed exactly-once delivery.
+- No redirects are followed; the operator-controlled target must be HTTPS. Raw tokens, full response bodies and exception details are not logged.
+
+**Development database reminder:** `EnsureCreated` only creates an empty schema. It does **not** update an existing local database when new outbox columns are added. Do not apply destructive resets to data you intend to keep. Proper versioned migrations remain outstanding.
+
+Test evidence includes real PostgreSQL `SKIP LOCKED` competition, lease recovery, wrong-token rejection, retry/dead-letter behavior, and an HTTP fake-handler verifying delivery classification. This does **not** demonstrate a live remote receiver or a complete operator re-drive workflow.
+

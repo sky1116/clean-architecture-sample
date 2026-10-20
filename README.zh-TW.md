@@ -159,3 +159,20 @@ python3 scripts/check_publication.py
 ## 明確保留的限制
 
 本專案是**教學型模組化單體**，不是完整的正式上線產品。目前不內建 OIDC 提供者、可信遊戲裁定端、正式資料庫 Migration、完整反作弊機制、賽季結算排名快照、Outbox 發送器或分散式訊息傳送（目前只完成 Outbox 事件的交易內持久化）。正式使用前，報名／成績提交與截止時間之間的競態也需要更嚴格的交易內驗證。必須由成功執行的 CI 提供測試證據；CI 綠燈不等於所有安全性或書中原則都已取得最終簽核。**書中架構規則**與**本範例採用的工程實作策略**明確分開。
+
+## 可選啟用的 Outbox 送達流程與限制
+
+本範例現在已在最外層 Web Driver 加入**可選啟用的 HTTPS Webhook Dispatcher**，並由 PostgreSQL 保存投遞狀態：
+
+- 設定 `Outbox__Enabled=true` 及 `Outbox__WebhookUrl=https://your-trusted-receiver.example/events` 才會開啟投遞；預設完全不對外發送。
+- PostgreSQL 使用 `FOR UPDATE SKIP LOCKED`、限時租約與隨機租約 Token，在多個 Worker 同時處理時避免領到相同待處理事件。
+- 送出的 JSON Envelope 包含固定 `EventId`、`EventType`，以及 `Idempotency-Key` Header。**接收端必須持久化事件 ID 來防止重複處理**。
+- HTTP 2xx 才能確認投遞；408、429、5xx 與網路失敗會重試，其他 4xx 視為永久失敗。
+- 暫時失敗使用有上限的退避時間；連續五次失敗進入 **Dead Letter**，需要營運者檢查。
+- 若接收端已處理成功、但發送端在保存確認之前當機，租約到期後仍**可能再次投遞**。這是 **At-least-once 投遞嘗試**，不是 Exactly-once 保證。
+- 不跟隨 HTTP Redirect、只接受操作人員設定的 HTTPS 目標，也不將敏感資料或外部回應原文寫進 Log。
+
+**開發資料庫提醒：** `EnsureCreated` 只能建立新資料庫 Schema，無法更新原本已存在的表。新欄位若尚未建立，必須在可拋棄的開發資料庫重建；有價值的資料不能直接清除。正式 Migration 尚待完成。
+
+目前已有 PostgreSQL 真實租約競爭、接手、過期 Token 拒絕、退避與 Dead Letter，以及 HTTP Handler 回應分類測試。但**尚未驗證真實外部接收端，也還沒有完整的人工作業重送介面**。
+

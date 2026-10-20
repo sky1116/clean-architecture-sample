@@ -159,3 +159,20 @@ python3 scripts/check_publication.py
 ## 明示的な限界と今後の課題
 
 このプロジェクトは**教育用モジュラーモノリス**であり、本番稼働が完成しているわけではありません。OIDC 提供者、信頼されたゲーム判定／発行サービス、本番 DB Migration、完全な不正検知、確定時点のランキング Snapshot、Outbox Dispatcher と分散メッセージ配送（現時点では同一トランザクション内のイベント保存のみ実装）は含まれません。参加登録や提出締切の競合については、本番導入の前にトランザクション内の追加対策が必要です。テスト結果は成功した CI の実行記録に基づいてのみ主張できます。緑の CI は完全な安全性や書籍への完全な適合証明ではありません。**書籍の依存性ルール**と**本サンプル独自の実務的な選択**を明確に区別しています。
+
+## オプトイン Outbox 配信と保証範囲
+
+最外層 Web Driver に**任意で有効化できる HTTPS Webhook Dispatcher**を追加しました。配信状態は PostgreSQL に保存されます。
+
+- `Outbox__Enabled=true` と `Outbox__WebhookUrl=https://your-trusted-receiver.example/events` を指定した場合のみ外部へ送信します。既定では送信しません。
+- PostgreSQL の `FOR UPDATE SKIP LOCKED`、期限付き Lease、ランダムな Lease Token を利用し、複数 Worker による同一イベントの同時獲得を避けます。
+- バージョン付き JSON Envelope、安定した `EventId`、`EventType`、`Idempotency-Key` Header を送信します。**受信側は EventId の重複を永続的に排除する必要があります**。
+- HTTP 2xx のみ配信成功として記録します。408、429、5xx とネットワーク障害はリトライ、それ以外の 4xx は恒久的失敗と扱います。
+- 一時的障害では上限付きの指数バックオフを利用し、五回の失敗で **Dead Letter** へ移動し、運用担当者の調査を待ちます。
+- 受信先の処理後、確認保存前に送信側が停止した場合は Lease 期限後に**再配信される可能性があります**。これは **At-least-once の試行**であり、Exactly-once ではありません。
+- リダイレクトを追わず、管理者が設定した HTTPS 宛先だけを利用します。秘密情報や HTTP 応答本文はログへ出力しません。
+
+**開発データベースについて：** `EnsureCreated` は空の Schema 作成専用です。既存データベースに Outbox 列を追加することはできません。破棄可能な開発環境以外では不用意にリセットしないでください。正式な Migration は今後の作業です。
+
+実際の PostgreSQL による Lease 競合、期限切れ回復、無効 Token の拒否、リトライ／Dead Letter、HTTP Handler の応答分類をテストしています。ただし**実際の外部受信サービスへの送信テスト、および手動再実行の運用画面は未実装**です。
+
