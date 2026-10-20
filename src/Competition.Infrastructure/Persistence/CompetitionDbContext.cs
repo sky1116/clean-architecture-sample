@@ -12,6 +12,8 @@ public sealed class CompetitionDbContext(DbContextOptions<CompetitionDbContext> 
     public DbSet<AuditRow> AuditEntries => Set<AuditRow>();
     public DbSet<OutboxRow> PendingEvents => Set<OutboxRow>();
     public DbSet<CorrectionRow> Corrections => Set<CorrectionRow>();
+    public DbSet<InboxReceiptRow> InboxReceipts => Set<InboxReceiptRow>();
+    public DbSet<ReceivedResultRow> ReceivedResults => Set<ReceivedResultRow>();
 
     protected override void OnModelCreating(ModelBuilder model)
     {
@@ -44,6 +46,17 @@ public sealed class CompetitionDbContext(DbContextOptions<CompetitionDbContext> 
             builder.HasIndex(x => new { x.ResultId, x.Revision }).IsUnique();
             builder.HasIndex(x => new { x.CompetitionId, x.OccurredAt });
             builder.Property(x => x.Reason).HasMaxLength(500).IsRequired();
+        });
+        model.Entity<InboxReceiptRow>(builder =>
+        {
+            builder.HasKey(x => x.EventId);
+            builder.Property(x => x.EventType).HasMaxLength(100).IsRequired();
+            builder.Property(x => x.PayloadDigest).HasMaxLength(64).IsRequired();
+            builder.HasIndex(x => new { x.CompetitionId, x.ResultId, x.Revision }).IsUnique();
+        });
+        model.Entity<ReceivedResultRow>(builder =>
+        {
+            builder.HasKey(x => new { x.CompetitionId, x.ResultId });
         });
         model.Entity<OutboxRow>(builder =>
         {
@@ -127,4 +140,28 @@ public sealed class OutboxRow
     public Guid? LeaseToken { get; set; }
     public DateTimeOffset? DeadLetteredAt { get; set; }
     public string? LastFailureCode { get; set; }
+}
+
+public sealed class InboxReceiptRow
+{
+    public Guid EventId { get; set; }
+    public Guid CompetitionId { get; set; }
+    public Guid ResultId { get; set; }
+    public int Revision { get; set; }
+    public string EventType { get; set; } = "";
+    public string PayloadDigest { get; set; } = "";
+    public DateTimeOffset ReceivedAt { get; set; }
+}
+
+/// <summary>
+/// Example consumer-owned projection, independent from the authoritative Results table.
+/// Only the Inbox gateway can update it, in the receipt's same transaction.
+/// </summary>
+public sealed class ReceivedResultRow
+{
+    public Guid CompetitionId { get; set; }
+    public Guid ResultId { get; set; }
+    public Guid ParticipantId { get; set; }
+    public int EffectivePoints { get; set; }
+    public int Revision { get; set; }
 }
