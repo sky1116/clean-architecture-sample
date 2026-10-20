@@ -62,6 +62,7 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
             Assert.Single(await context.Results.ToListAsync());
             Assert.Single(await context.RequestReceipts.ToListAsync());
             Assert.Single(await context.AuditEntries.ToListAsync());
+            Assert.Single(await context.PendingEvents.ToListAsync());
         }
     }
 
@@ -92,6 +93,7 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
             Assert.Single(await context.Results.ToListAsync());
             Assert.Single(await context.RequestReceipts.ToListAsync());
             Assert.Single(await context.AuditEntries.ToListAsync());
+            Assert.Single(await context.PendingEvents.ToListAsync());
         }
     }
 
@@ -178,6 +180,7 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
             Assert.Equal(new[] { 55, 40, 65 }, history.Select(x => x.Points));
             Assert.Equal(new[] { 2, 1, 0 }, history.Select(x => x.Revision));
             Assert.Equal(3, await context.AuditEntries.CountAsync());
+            Assert.Equal(3, await context.PendingEvents.CountAsync());
             Assert.Equal(2, await context.Corrections.CountAsync());
             Assert.Equal(1, await context.Results.CountAsync());
         }

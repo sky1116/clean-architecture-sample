@@ -39,6 +39,8 @@ public sealed class PostgresCorrectionGateway(CompetitionDbContext database) : I
             Id = Guid.NewGuid(), CompetitionId = competitionId, ParticipantId = administratorId,
             ResultId = resultId, Action = "ResultCorrected", OccurredAt = now
         });
+        database.PendingEvents.Add(OutboxRecords.Corrected(competitionId, resultId,
+            next, correctedPoints, now));
         try
         {
             await database.SaveChangesAsync(cancellationToken);

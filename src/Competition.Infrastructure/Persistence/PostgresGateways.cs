@@ -104,6 +104,7 @@ public sealed class PostgresResultGateway(CompetitionDbContext database) : IResu
             Id = Guid.NewGuid(), CompetitionId = proposed.CompetitionId, ParticipantId = proposed.ParticipantId,
             ResultId = proposed.Id, Action = "ResultAccepted", OccurredAt = proposed.RecordedAt
         });
+        database.PendingEvents.Add(OutboxRecords.Accepted(proposed));
 
         try
         {

@@ -10,6 +10,7 @@ public sealed class CompetitionDbContext(DbContextOptions<CompetitionDbContext> 
     public DbSet<ResultRow> Results => Set<ResultRow>();
     public DbSet<RequestReceiptRow> RequestReceipts => Set<RequestReceiptRow>();
     public DbSet<AuditRow> AuditEntries => Set<AuditRow>();
+    public DbSet<OutboxRow> PendingEvents => Set<OutboxRow>();
     public DbSet<CorrectionRow> Corrections => Set<CorrectionRow>();
 
     protected override void OnModelCreating(ModelBuilder model)
@@ -43,6 +44,13 @@ public sealed class CompetitionDbContext(DbContextOptions<CompetitionDbContext> 
             builder.HasIndex(x => new { x.ResultId, x.Revision }).IsUnique();
             builder.HasIndex(x => new { x.CompetitionId, x.OccurredAt });
             builder.Property(x => x.Reason).HasMaxLength(500).IsRequired();
+        });
+        model.Entity<OutboxRow>(builder =>
+        {
+            builder.HasKey(x => x.Id);
+            builder.Property(x => x.EventType).HasMaxLength(100).IsRequired();
+            builder.Property(x => x.Payload).HasColumnType("jsonb").IsRequired();
+            builder.HasIndex(x => new { x.PublishedAt, x.OccurredAt });
         });
         model.Entity<AuditRow>(builder =>
         {
@@ -102,4 +110,14 @@ public sealed class CorrectionRow
     public int ReplacementPoints { get; set; }
     public string Reason { get; set; } = "";
     public DateTimeOffset OccurredAt { get; set; }
+}
+
+public sealed class OutboxRow
+{
+    public Guid Id { get; set; }
+    public Guid CompetitionId { get; set; }
+    public string EventType { get; set; } = "";
+    public string Payload { get; set; } = "";
+    public DateTimeOffset OccurredAt { get; set; }
+    public DateTimeOffset? PublishedAt { get; set; }
 }
