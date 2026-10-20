@@ -22,7 +22,7 @@ ROUTES = (
 TERMS = ("input boundary", "output boundary", "presenter", "gateway",
          "postgresql", "opentelemetry", "opaqueevidence", "idempotency-key")
 
-LINKS = re.compile(r"!?(?:\\[[^\\]]*\\])\\(([^)]+)\\)")
+LINKS = re.compile(r"!?\[[^\]]*\]\(([^)]+)\)")
 
 
 def inspect_page(name: str, body: str) -> list[str]:
@@ -54,7 +54,11 @@ def main() -> int:
     if "--self-test" in sys.argv:
         # Negative control: stripping the content must cause the gate to fail.
         assert inspect_page("README.md", "")
-        assert not inspect_page("README.md", (ROOT / "README.md").read_text(encoding="utf-8"))
+        actual = (ROOT / "README.md").read_text(encoding="utf-8")
+        assert not inspect_page("README.md", actual)
+        # Also prove missing local links are not silently accepted.
+        assert any("missing local link" in failure for failure in
+                   inspect_page("README.md", actual + "\\n[broken](missing-local-doc.md)"))
         print("Documentation negative control passed.")
         return 0
 
@@ -75,7 +79,7 @@ def main() -> int:
         except (OSError, ET.ParseError) as error:
             failures.append(f"{name}: invalid XML ({type(error).__name__})")
     if failures:
-        print("\\n".join(failures))
+        print("\n".join(failures))
         return 1
     print("Documentation gate PASS: three localized READMEs, local links and both SVGs.")
     return 0
