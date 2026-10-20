@@ -1,3 +1,4 @@
+using Competition.Application.Ports;
 using Competition.Infrastructure.Delivery;
 using Competition.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -123,4 +124,103 @@ public sealed class OutboxDeliveryTests : IAsyncLifetime
         Assert.Contains(firstId, ids);
         Assert.Contains(secondId, ids);
     }
+    [Fact]
+    public async Task Audited_operator_recovery_can_redrive_a_dead_letter_only_once()
+    {
+        var id = await SeedAsync();
+        var actor = Guid.NewGuid();
+        await using (var db = Open())
+        {
+            var delivery = new PostgresOutboxDeliveryStore(db);
+            var claimed = Assert.Single(await delivery.ClaimAsync(1, Now, Lease, CancellationToken.None));
+            Assert.True(await delivery.RecordFailureAsync(id, claimed.LeaseToken,
+                Now.AddSeconds(1), "delivery.permanent", 1, CancellationToken.None));
+        }
+
+        await using (var db = Open())
+        {
+            var recovery = new PostgresOutboxRecoveryGateway(db);
+            Assert.Equal(OutboxRecoveryStatus.Requeued, await recovery.RedriveAsync(
+                id, actor, "Destination authentication was repaired", Now.AddMinutes(3),
+                CancellationToken.None));
+            Assert.Equal(OutboxRecoveryStatus.NotEligible, await recovery.RedriveAsync(
+                id, actor, "Second unauthorized reset attempt", Now.AddMinutes(3),
+                CancellationToken.None));
+        }
+
+        await using (var verify = Open())
+        {
+            var row = await verify.PendingEvents.AsNoTracking().SingleAsync(x => x.Id == id);
+            Assert.Null(row.DeadLetteredAt);
+            Assert.Null(row.LastFailureCode);
+            Assert.Equal(0, row.AttemptCount);
+            Assert.Equal(Now.AddMinutes(3), row.NextAttemptAt);
+            var audit = Assert.Single(await verify.OutboxRecoveryAudits.AsNoTracking().ToListAsync());
+            Assert.Equal(id, audit.EventId);
+            Assert.Equal(actor, audit.AdministratorId);
+            Assert.Equal(1, audit.PreviousAttempts);
+            Assert.Equal("Destination authentication was repaired", audit.Reason);
+        }
+
+        await using (var db = Open())
+        {
+            var delivery = new PostgresOutboxDeliveryStore(db);
+            var claimed = Assert.Single(await delivery.ClaimAsync(1, Now.AddMinutes(3),
+                Lease, CancellationToken.None));
+            Assert.Equal(id, claimed.Id);
+            Assert.Equal(1, claimed.AttemptCount);
+        }
+    }
+
+    [Fact]
+    public async Task Published_event_cannot_be_requeued_as_a_dead_letter()
+    {
+        var id = await SeedAsync();
+        await using (var db = Open())
+        {
+            var delivery = new PostgresOutboxDeliveryStore(db);
+            var claimed = Assert.Single(await delivery.ClaimAsync(1, Now, Lease, CancellationToken.None));
+            Assert.True(await delivery.MarkPublishedAsync(id, claimed.LeaseToken,
+                Now.AddSeconds(1), CancellationToken.None));
+        }
+
+        await using (var db = Open())
+        {
+            Assert.Equal(OutboxRecoveryStatus.NotEligible,
+                await new PostgresOutboxRecoveryGateway(db).RedriveAsync(
+                    id, Guid.NewGuid(), "Must not redrive a published event", Now.AddMinutes(3),
+                    CancellationToken.None));
+            Assert.Empty(await db.OutboxRecoveryAudits.ToListAsync());
+            Assert.NotNull((await db.PendingEvents.SingleAsync(x => x.Id == id)).PublishedAt);
+        }
+    }
+
+    [Fact]
+    public async Task Concurrent_operator_recovery_commits_one_audit_and_one_requeue()
+    {
+        var id = await SeedAsync();
+        await using (var db = Open())
+        {
+            var store = new PostgresOutboxDeliveryStore(db);
+            var claim = Assert.Single(await store.ClaimAsync(1, Now, Lease, CancellationToken.None));
+            Assert.True(await store.RecordFailureAsync(id, claim.LeaseToken,
+                Now.AddSeconds(1), "delivery.timeout", 1, CancellationToken.None));
+        }
+
+        async Task<OutboxRecoveryStatus> Redrive()
+        {
+            await using var db = Open();
+            return await new PostgresOutboxRecoveryGateway(db).RedriveAsync(
+                id, Guid.NewGuid(), "Operator inspected the failed endpoint",
+                Now.AddMinutes(3), CancellationToken.None);
+        }
+
+        var results = await Task.WhenAll(Task.Run(Redrive), Task.Run(Redrive));
+        Assert.Single(results, x => x == OutboxRecoveryStatus.Requeued);
+        Assert.Single(results, x => x == OutboxRecoveryStatus.NotEligible);
+        await using var verified = Open();
+        Assert.Single(await verified.OutboxRecoveryAudits.ToListAsync());
+        Assert.Null((await verified.PendingEvents.SingleAsync(x => x.Id == id)).DeadLetteredAt);
+    }
+
 }
