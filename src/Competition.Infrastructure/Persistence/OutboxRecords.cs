@@ -16,6 +16,7 @@ internal static class OutboxRecords
         CompetitionId = result.CompetitionId,
         EventType = "competition.result.accepted.v1",
         OccurredAt = result.RecordedAt,
+        NextAttemptAt = result.RecordedAt,
         Payload = JsonSerializer.Serialize(new
         {
             SchemaVersion = 1,
@@ -33,6 +34,7 @@ internal static class OutboxRecords
         CompetitionId = competitionId,
         EventType = "competition.result.corrected.v1",
         OccurredAt = now,
+        NextAttemptAt = now,
         Payload = JsonSerializer.Serialize(new
         {
             SchemaVersion = 1,

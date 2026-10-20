@@ -50,7 +50,8 @@ public sealed class CompetitionDbContext(DbContextOptions<CompetitionDbContext> 
             builder.HasKey(x => x.Id);
             builder.Property(x => x.EventType).HasMaxLength(100).IsRequired();
             builder.Property(x => x.Payload).HasColumnType("jsonb").IsRequired();
-            builder.HasIndex(x => new { x.PublishedAt, x.OccurredAt });
+            builder.HasIndex(x => new { x.PublishedAt, x.DeadLetteredAt, x.NextAttemptAt });
+            builder.Property(x => x.LastFailureCode).HasMaxLength(80);
         });
         model.Entity<AuditRow>(builder =>
         {
@@ -120,4 +121,10 @@ public sealed class OutboxRow
     public string Payload { get; set; } = "";
     public DateTimeOffset OccurredAt { get; set; }
     public DateTimeOffset? PublishedAt { get; set; }
+    public int AttemptCount { get; set; }
+    public DateTimeOffset NextAttemptAt { get; set; }
+    public DateTimeOffset? LeaseUntil { get; set; }
+    public Guid? LeaseToken { get; set; }
+    public DateTimeOffset? DeadLetteredAt { get; set; }
+    public string? LastFailureCode { get; set; }
 }
