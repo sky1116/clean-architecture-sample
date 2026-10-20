@@ -1,3 +1,4 @@
+using Competition.Infrastructure.Delivery;
 using Competition.Web;
 using System.Security.Claims;
 using System.Diagnostics;
