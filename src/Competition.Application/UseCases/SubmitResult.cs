@@ -88,6 +88,9 @@ public sealed class SubmitResultInteractor(
         {
             ResultWriteStatus.Created => new SubmitResultOutput("result.accepted", written.Result?.Id, written.Result?.Points),
             ResultWriteStatus.Replayed => new SubmitResultOutput("result.replayed", written.Result?.Id, written.Result?.Points),
+            ResultWriteStatus.CompetitionNotFound => new SubmitResultOutput("competition.not_found"),
+            ResultWriteStatus.CompetitionClosed => new SubmitResultOutput("competition.not_active"),
+            ResultWriteStatus.NotEnrolled => new SubmitResultOutput("participant.not_enrolled"),
             _ => new SubmitResultOutput("result.idempotency_conflict")
         });
     }

@@ -42,7 +42,7 @@ public sealed class RestPresenter :
         "result.replayed" or "leaderboard.ready" or "history.ready"
             or "result.correction_applied" => 200,
         "actor.unauthenticated" => 401,
-        "actor.forbidden" => 403,
+        "actor.forbidden" or "participant.not_enrolled" => 403,
         "competition.not_found" or "result.not_found" => 404,
         "competition.already_exists" or "registration.already_registered"
             or "result.idempotency_conflict" or "result.version_conflict" or "competition.not_active"

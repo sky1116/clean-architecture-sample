@@ -66,7 +66,7 @@ public sealed class PostgresEnrollmentGateway(CompetitionDbContext database) : I
     }
 }
 
-public sealed class PostgresResultGateway(CompetitionDbContext database) : IResultGateway
+public sealed class PostgresResultGateway(CompetitionDbContext database, IUtcClock clock) : IResultGateway
 {
     public async Task<ResultWriteOutcome> AppendAsync(VerifiedResult proposed, string idempotencyKey,
         string requestFingerprint, CancellationToken cancellationToken)
@@ -80,6 +80,37 @@ public sealed class PostgresResultGateway(CompetitionDbContext database) : IResu
         {
             await transaction.RollbackAsync(cancellationToken);
             return await ExistingReceiptAsync(existing, requestFingerprint, cancellationToken);
+        }
+
+        // This guard runs INSIDE the transaction, after any idempotent replay lookup.
+        // Competition windows and accepted enrollments are immutable in this sample.
+        // The clock is an inward-owned port to support deterministic adversarial tests.
+        // Acceptance time is the in-transaction policy check, not the HTTP arrival time.
+        var competition = await database.Competitions.AsNoTracking().SingleOrDefaultAsync(
+            row => row.Id == proposed.CompetitionId, cancellationToken);
+        if (competition is null)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new(ResultWriteStatus.CompetitionNotFound, null);
+        }
+        var dbCheckAt = clock.UtcNow;
+        if (dbCheckAt.Offset != TimeSpan.Zero ||
+            dbCheckAt < competition.StartsAt || dbCheckAt >= competition.EndsAt)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new(ResultWriteStatus.CompetitionClosed, null);
+        }
+        if (!await database.Enrollments.AsNoTracking().AnyAsync(row =>
+            row.CompetitionId == proposed.CompetitionId &&
+            row.ParticipantId == proposed.ParticipantId, cancellationToken))
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new(ResultWriteStatus.NotEnrolled, null);
+        }
+        if (proposed.Points < 0 || proposed.Points > competition.MaximumPoints)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return new(ResultWriteStatus.Conflict, null);
         }
 
         var sameEvidence = await database.Results.AsNoTracking().AnyAsync(
