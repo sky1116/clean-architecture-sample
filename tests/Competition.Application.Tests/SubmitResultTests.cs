@@ -116,4 +116,28 @@ public sealed class SubmitResultTests
         Assert.Equal("actor.unauthenticated", actual.Code);
         Assert.Equal(0, actual.Writes);
     }
+    private sealed class AdvancingClock : IUtcClock
+    {
+        private int _calls;
+
+        public DateTimeOffset UtcNow => Interlocked.Increment(ref _calls) == 1
+            ? Start.AddMinutes(2)
+            : Start.AddDays(1);
+    }
+
+    [Fact]
+    public async Task Verification_completed_after_competition_end_must_not_write_result()
+    {
+        var gateway = new Results();
+        var presenter = new Presenter();
+        var useCase = new SubmitResultInteractor(new Competitions(), new Enrollments(),
+            new Evidence(), gateway, new AdvancingClock(), new Ids());
+
+        await useCase.ExecuteAsync(new SubmitResultInput(Guid.NewGuid(), Guid.NewGuid(),
+            "window-race-request", "trusted-proof"), presenter, CancellationToken.None);
+
+        Assert.Equal("competition.not_active", presenter.Response?.Code);
+        Assert.Equal(0, gateway.Writes);
+    }
+
 }

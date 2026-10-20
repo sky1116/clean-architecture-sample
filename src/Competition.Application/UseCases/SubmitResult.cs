@@ -67,11 +67,19 @@ public sealed class SubmitResultInteractor(
             return;
         }
 
-        try { competition.RequireValidPoints(verified.Points); }
+        // Evidence verification may take time. Recheck the competition window as close
+        // to persistence as possible; the database gateway must enforce stricter
+        // transaction-bound time rules if a production-grade cutoff is required.
+        var acceptedAt = clock.UtcNow;
+        try
+        {
+            competition.RequireResultWindow(acceptedAt);
+            competition.RequireValidPoints(verified.Points);
+        }
         catch (DomainRuleException ex) { output.Present(new(ex.Code)); return; }
 
         var verifiedResult = VerifiedResult.Create(ids.Next(), input.CompetitionId,
-            input.AuthenticatedParticipantId, verified.Points, clock.UtcNow, verified.EvidenceId);
+            input.AuthenticatedParticipantId, verified.Points, acceptedAt, verified.EvidenceId);
         var fingerprintBytes = SHA256.HashData(Encoding.UTF8.GetBytes(
             $"{input.CompetitionId:N}:{input.AuthenticatedParticipantId:N}:{input.OpaqueEvidence}"));
         var fingerprint = Convert.ToHexString(fingerprintBytes);
