@@ -134,7 +134,7 @@ Repository **介面**由需要它的內圈持有；EF Core **實作**位於外�
    - `Authentication__Authority`：HTTPS OIDC 簽發者
    - `Authentication__Audience`：Token 必須符合的 API Audience
    - `TrustedAuthority__SigningKeyBase64`：至少 32 個隨機位元組的 Base64，**只與可信成績裁定端共享**
-   - `Database__BootstrapOnStart=true`：**僅限 Development**，對全新或已由 Migration 管理的資料庫套用兩個已納管的 EF Core 版本化 Migration；正式環境絕不自動套用
+   - `Database__BootstrapOnStart=true`：**僅限 Development**，對全新或已由 Migration 管理的資料庫套用三個已納管的 EF Core 版本化 Migration；正式環境絕不自動套用
 
 4. 執行 `dotnet run --project src/Competition.Web/Competition.Web.csproj --environment Development`。
 5. 使用 `GET /health` 確認程序存活；其他受保護 API 需使用正式驗證的 Access Token。
@@ -158,7 +158,7 @@ python3 scripts/check_publication.py
 
 ## 明確保留的限制
 
-本專案是**教學型模組化單體**，不是完整的正式上線產品。目前不內建 OIDC 提供者、可信遊戲裁定端、完整反作弊機制、賽季結算排名快照、正式 Webhook 接收端、Exactly-once 訊息處理、Dead Letter 管理者重送工具或跨系統可靠投遞驗收。報名與成績寫入現已在 PostgreSQL 交易內重新呼叫 Domain 規則；判定時間是交易內的受信任 UTC Clock，不是 Commit 時間。若需要嚴格的資料庫提交時間截止線，或允許其他寫入者修改競賽期限，仍需額外設計與驗證。必須由成功執行的 CI 提供測試證據；CI 綠燈不等於所有安全性或書中原則都已取得最終簽核。**書中架構規則**與**本範例採用的工程實作策略**明確分開。
+本專案是**教學型模組化單體**，不是完整的正式上線產品。目前不內建 OIDC 提供者、可信遊戲裁定端、完整反作弊機制、賽季結算排名快照、獨立部署並經生產驗證的 Webhook 接收服務、Exactly-once 訊息處理、Dead Letter 管理者重送工具或跨系統可靠投遞驗收。報名與成績寫入現已在 PostgreSQL 交易內重新呼叫 Domain 規則；判定時間是交易內的受信任 UTC Clock，不是 Commit 時間。若需要嚴格的資料庫提交時間截止線，或允許其他寫入者修改競賽期限，仍需額外設計與驗證。必須由成功執行的 CI 提供測試證據；CI 綠燈不等於所有安全性或書中原則都已取得最終簽核。**書中架構規則**與**本範例採用的工程實作策略**明確分開。
 
 ## 可選啟用的 Outbox 送達流程與限制
 
@@ -172,9 +172,9 @@ python3 scripts/check_publication.py
 - 若接收端已處理成功、但發送端在保存確認之前當機，租約到期後仍**可能再次投遞**。這是 **At-least-once 投遞嘗試**，不是 Exactly-once 保證。
 - 不跟隨 HTTP Redirect、只接受操作人員設定的 HTTPS 目標，也不將敏感資料或外部回應原文寫進 Log。
 
-**版本化 Migration：** 已納管 `BaseCompetition`、`DurableOutbox` 兩個 EF Core Migration。整合測試驗證全新建置、保留舊資料的版本升級、重複套用及 Model Snapshot 漂移。僅 Development 的 `Database__BootstrapOnStart=true` 現在呼叫 `MigrateAsync`，不再使用 `EnsureCreated`。**若舊開發資料庫原先由 `EnsureCreated` 建立，沒有 EF Migration History，應先備份並審查基準導入方式，不能直接破壞或清除資料。** 正式環境 Migration 必須由獨立部署流程審查套用，不能交給 Web 啟動自動變更。
+**版本化 Migration：** 已納管 `BaseCompetition`、`DurableOutbox`、`InboxProjection` 三個 EF Core Migration。整合測試驗證全新建置、保留舊資料的版本升級、重複套用及 Model Snapshot 漂移。僅 Development 的 `Database__BootstrapOnStart=true` 現在呼叫 `MigrateAsync`，不再使用 `EnsureCreated`。**若舊開發資料庫原先由 `EnsureCreated` 建立，沒有 EF Migration History，應先備份並審查基準導入方式，不能直接破壞或清除資料。** 正式環境 Migration 必須由獨立部署流程審查套用，不能交給 Web 啟動自動變更。
 
-目前已有 PostgreSQL 真實租約競爭、接手、過期 Token 拒絕、退避與 Dead Letter，以及 HTTP Handler 回應分類測試。但**尚未驗證真實外部接收端，也還沒有完整的人工作業重送介面**。
+目前已有 PostgreSQL 真實租約競爭、接手、過期 Token 拒絕、退避與 Dead Letter，以及 HTTP Handler 回應分類測試。但**尚未驗證獨立部署的正式外部接收服務，也還沒有完整的人工作業重送介面**。
 
 
 ## 已通過的完整 HTTP 情境測試
@@ -199,4 +199,17 @@ python3 scripts/check_publication.py
 ## Migration 與交易截止條件驗證（特定版本）
 
 [GitHub Actions 39386303105](https://github.com/sky1116/clean-architecture-sample/actions/runs/39386303105) 在此版本通過 **76 項測試**：其中 **22 項使用真正 PostgreSQL 容器的整合測試**，其餘 54 項為單元／架構／HTTP／Adapter 測試，三語文件檢查亦通過。案例涵蓋保存舊資料的 Schema 升級、重跑 Migration、Model Snapshot 漂移、交易內截止時間、截止後合法重送及並發報名。測試數字僅代表這次提交的實際執行證據，不代表未來版本自動通過。
+
+
+## 接收端 Webhook 與持久化 Inbox 實務範例
+
+本專案已新增示範接收端 `POST /api/integrations/result-events`，**預設停用**。只有信任的伺服器間傳輸才應設定 `Inbox__Enabled=true`，並透過環境設定提供至少 32 個隨機位元組的 `Inbox__WebhookSigningKeyBase64`。發送端的 `Outbox__WebhookSigningKeyBase64` 必須使用**相同的受信任共享金鑰**，`Outbox__WebhookUrl` 則指向由管理者設定的 HTTPS 接收網址。金鑰絕不能放進 Git 或玩家裝置。
+
+發送端以 HMAC-SHA256 簽署**實際傳送的 JSON 位元組**；接收端先檢查 `X-Webhook-Signature: v1=...`，**驗證成功後才解析 JSON**，並核對 `X-Event-Id`、`X-Event-Type`、版本、事件識別碼及 8 KiB 大小限制。範例仍屬同一模組化單體內的整合端點，**不是獨立部署且已受生產驗證的接收服務**。
+
+內圈 `ReceiveResultEventInteractor` 依賴 `IResultInboxPort`；外圈 PostgreSQL Adapter 在**同一交易**中保存 Inbox 收據與獨立的 `ReceivedResults` 投影。收到的 Webhook **不會直接修改正式 `Results` 或公開排行榜**。相同 EventId 與內容的重送只回傳既有結果；相同 ID 內容改變視為衝突；更正事件若先於原始事件抵達，會回傳 HTTP 503 供重試。更正必須依版本順序到達，前置事件長期缺失仍可能造成發送端進入 Dead Letter。
+
+真實 HTTP／PostgreSQL 測試涵蓋有效簽章、偽造與竄改拒絕、重送、內容衝突、亂序、停用端點、過大輸入；資料庫整合測試另涵蓋並發、重新啟動後重送與交易一致性。**Inbox 去重不等於跨服務 Exactly-once 保證，也不是正式外部網路環境驗收。**
+
+[最新 Inbox HTTP/PostgreSQL 成功紀錄：94 項測試](https://github.com/sky1116/clean-architecture-sample/actions/runs/39390851699)，包含 34 項 PostgreSQL 整合測試及其餘 60 項測試，文件檢查亦通過。數字僅適用於該 Commit。
 

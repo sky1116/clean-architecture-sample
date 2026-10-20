@@ -134,7 +134,7 @@ CI の成功を確認するまでは、**全テスト PASS と主張しません
    - `Authentication__Authority`：HTTPS の OIDC Issuer URL
    - `Authentication__Audience`：検証対象の API Audience
    - `TrustedAuthority__SigningKeyBase64`：最低 32 バイトのランダムな秘密情報を Base64 化したもの。**信頼された判定端末以外と共有しません**
-   - `Database__BootstrapOnStart=true`：**Development 専用**。空、または Migration 管理下の DB にチェックイン済みの二つの EF Core Migration を適用します。本番環境では自動実行しません
+   - `Database__BootstrapOnStart=true`：**Development 専用**。空、または Migration 管理下の DB にチェックイン済みの三つの EF Core Migration を適用します。本番環境では自動実行しません
 
 4. `dotnet run --project src/Competition.Web/Competition.Web.csproj --environment Development` を実行します。
 5. `GET /health` でプロセスの生存を確認します。保護対象 API は検証済み Access Token が必要です。
@@ -158,7 +158,7 @@ python3 scripts/check_publication.py
 
 ## 明示的な限界と今後の課題
 
-このプロジェクトは**教育用モジュラーモノリス**であり、本番稼働が完成しているわけではありません。OIDC 提供者、信頼されたゲーム判定／発行サービス、完全な不正検知、確定時点のランキング Snapshot、本番向け Webhook 受信サービス、Exactly-once 処理、Dead Letter の運用者再送機能、分散システム間の配送保証は含まれません。登録と結果の書き込みは現在 PostgreSQL トランザクション内で Domain のルールを再検証しています。ただし判定は信頼できる UTC Clock の読み取り時点であり、DB Commit 時点ではありません。厳密なコミット時刻による締切や他の書き込み主体による期間変更には追加設計が必要です。テスト結果は成功した CI の実行記録に基づいてのみ主張できます。緑の CI は完全な安全性や書籍への完全な適合証明ではありません。**書籍の依存性ルール**と**本サンプル独自の実務的な選択**を明確に区別しています。
+このプロジェクトは**教育用モジュラーモノリス**であり、本番稼働が完成しているわけではありません。OIDC 提供者、信頼されたゲーム判定／発行サービス、完全な不正検知、確定時点のランキング Snapshot、独立してデプロイした本番向け Webhook 受信サービス、Exactly-once 処理、Dead Letter の運用者再送機能、分散システム間の配送保証は含まれません。登録と結果の書き込みは現在 PostgreSQL トランザクション内で Domain のルールを再検証しています。ただし判定は信頼できる UTC Clock の読み取り時点であり、DB Commit 時点ではありません。厳密なコミット時刻による締切や他の書き込み主体による期間変更には追加設計が必要です。テスト結果は成功した CI の実行記録に基づいてのみ主張できます。緑の CI は完全な安全性や書籍への完全な適合証明ではありません。**書籍の依存性ルール**と**本サンプル独自の実務的な選択**を明確に区別しています。
 
 ## オプトイン Outbox 配信と保証範囲
 
@@ -172,9 +172,9 @@ python3 scripts/check_publication.py
 - 受信先の処理後、確認保存前に送信側が停止した場合は Lease 期限後に**再配信される可能性があります**。これは **At-least-once の試行**であり、Exactly-once ではありません。
 - リダイレクトを追わず、管理者が設定した HTTPS 宛先だけを利用します。秘密情報や HTTP 応答本文はログへ出力しません。
 
-**バージョン付き Migration：** `BaseCompetition` と `DurableOutbox` の EF Core Migration をチェックインしています。統合テストで新規構築、既存データを保持した更新、再実行、Model Snapshot の差分を検証します。Development 限定の `Database__BootstrapOnStart=true` は現在 `EnsureCreated` ではなく `MigrateAsync` を呼びます。以前 `EnsureCreated` で作成した DB には Migration History がないため、バックアップと慎重な基準移行が必要です。貴重なデータを削除したり、無条件で更新したりしてはいけません。本番環境では Web 起動時ではなく独立したレビュー済みの Migration 手順を用いてください。
+**バージョン付き Migration：** `BaseCompetition`、`DurableOutbox`、`InboxProjection` の EF Core Migration をチェックインしています。統合テストで新規構築、既存データを保持した更新、再実行、Model Snapshot の差分を検証します。Development 限定の `Database__BootstrapOnStart=true` は現在 `EnsureCreated` ではなく `MigrateAsync` を呼びます。以前 `EnsureCreated` で作成した DB には Migration History がないため、バックアップと慎重な基準移行が必要です。貴重なデータを削除したり、無条件で更新したりしてはいけません。本番環境では Web 起動時ではなく独立したレビュー済みの Migration 手順を用いてください。
 
-実際の PostgreSQL による Lease 競合、期限切れ回復、無効 Token の拒否、リトライ／Dead Letter、HTTP Handler の応答分類をテストしています。ただし**実際の外部受信サービスへの送信テスト、および手動再実行の運用画面は未実装**です。
+実際の PostgreSQL による Lease 競合、期限切れ回復、無効 Token の拒否、リトライ／Dead Letter、HTTP Handler の応答分類をテストしています。ただし**独立デプロイの本番外部受信サービスへの送信テスト、および手動再実行の運用画面は未実装**です。
 
 
 ## 検証済みのフルスタック HTTP シナリオ
@@ -199,4 +199,17 @@ python3 scripts/check_publication.py
 ## Migration とトランザクション締切検証（対象リビジョンのみ）
 
 [GitHub Actions 39386303105](https://github.com/sky1116/clean-architecture-sample/actions/runs/39386303105) では **76 件のテスト**（**実際の PostgreSQL を使う統合テスト 22 件**、単体・アーキテクチャ・HTTP・アダプターテスト 54 件）と三言語ドキュメント検証が成功しました。既存データを保持する Migration、再実行、Model Snapshot の差分、トランザクション内の締切、期限後の冪等な再送、同時登録を検証しています。件数はそのリビジョンの証拠であり、将来の変更に対する保証ではありません。
+
+
+## Webhook 受信側と永続 Inbox の実装例
+
+サンプルの受信エンドポイント `POST /api/integrations/result-events` を追加しました。**既定では無効**です。信頼されたサーバー間通信に限定し、`Inbox__Enabled=true` と 32 バイト以上のランダムな `Inbox__WebhookSigningKeyBase64` を設定します。送信側の `Outbox__WebhookSigningKeyBase64` に**同じ信頼済み共有鍵**を指定し、管理者が指定した HTTPS の `Outbox__WebhookUrl` を使用します。秘密鍵を Git やプレイヤーのクライアントに置いてはいけません。
+
+送信側は**実際に送る JSON バイト列**を HMAC-SHA256 で署名し、受信側は JSON を処理する**前に** `X-Webhook-Signature: v1=...` を検証します。`X-Event-Id`、`X-Event-Type`、SchemaVersion、ID、8 KiB サイズ上限も確認します。この受信端はモジュラーモノリスの教材用インテグレーションであり、**独立デプロイ済みの本番受信サービスではありません**。
+
+内側の `ReceiveResultEventInteractor` は `IResultInboxPort` に依存し、外側の PostgreSQL Adapter が **Inbox の受信記録と独立した `ReceivedResults` 射影を同じトランザクション**で保存します。Webhooks は元の `Results` テーブルや公開ランキングを変更しません。同じ EventId と同じ本文は重複扱い、同じ ID に異なる本文は競合、原本より先に到達した訂正は HTTP 503 を返して再送を待ちます。訂正は版数順に処理されるため、依存イベントが届かないと送信側で Dead Letter に至る場合があります。
+
+実際の HTTP/PostgreSQL テストでは署名、改ざん、重複、異なる本文、順序逆転、無効化、サイズ制限を確認します。DB テストは複数受信者・再起動後再送・一意制約・整合性を検証します。これは **Exactly-once の配送保証でも外部本番ネットワークの検証でもありません**。
+
+[Inbox HTTP/PostgreSQL の成功 CI：94 件](https://github.com/sky1116/clean-architecture-sample/actions/runs/39390851699)。PostgreSQL 統合 34 件、その他 60 件と文書検証が成功。件数は対象リビジョンのみの証拠です。
 

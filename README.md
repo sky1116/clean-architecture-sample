@@ -130,7 +130,7 @@ Prerequisites: .NET 10 SDK, Docker for PostgreSQL, and a **separate OIDC identit
    - `Authentication__Authority`: HTTPS OIDC issuer URL
    - `Authentication__Audience`: API audience expected in validated tokens
    - `TrustedAuthority__SigningKeyBase64`: base64 of at least 32 random secret bytes, shared **only with the trusted result issuer**
-   - `Database__BootstrapOnStart=true`: **Development only**, applies the two checked-in versioned EF Core migrations to a fresh/migration-managed database; never applies automatically outside Development
+   - `Database__BootstrapOnStart=true`: **Development only**, applies the three checked-in versioned EF Core migrations to a fresh/migration-managed database; never applies automatically outside Development
 
 4. Run `dotnet run --project src/Competition.Web/Competition.Web.csproj --environment Development`.
 5. Call `GET /health` to check liveness; authenticate against your configured issuer for protected endpoints.
@@ -154,7 +154,7 @@ The integration suite starts disposable real PostgreSQL containers and covers tr
 
 ## Explicit limitations and next work
 
-This project is an educational modular monolith, **not a finished production service**. In particular, it does not bundle an OIDC provider, game authority/issuer, comprehensive anti-cheat checks, historical finalized leaderboard snapshots, a proven production webhook receiver, exactly-once event processing, operator dead-letter redrive tools, or fault-tolerant multi-system delivery. Enrollment and result writes now recheck Domain policies inside PostgreSQL transactions using a trusted server-side UTC clock. The policy decision is timed at the in-transaction check, **not** at database commit. Stronger commit-time/DB-clock guarantees and multi-writer scheduling changes require additional production design. Only a passing CI run supports claims about executed tests, and a green CI check does not establish complete security or book-level conformity. This separation between **the book's dependency principles** and **our engineering choices** is intentional.
+This project is an educational modular monolith, **not a finished production service**. In particular, it does not bundle an OIDC provider, game authority/issuer, comprehensive anti-cheat checks, historical finalized leaderboard snapshots, a production-proven external webhook receiver, exactly-once event processing, operator dead-letter redrive tools, or fault-tolerant multi-system delivery. Enrollment and result writes now recheck Domain policies inside PostgreSQL transactions using a trusted server-side UTC clock. The policy decision is timed at the in-transaction check, **not** at database commit. Stronger commit-time/DB-clock guarantees and multi-writer scheduling changes require additional production design. Only a passing CI run supports claims about executed tests, and a green CI check does not establish complete security or book-level conformity. This separation between **the book's dependency principles** and **our engineering choices** is intentional.
 
 ## Opt-in Outbox delivery: semantics and operations
 
@@ -168,9 +168,9 @@ The sample now implements an **optional HTTPS webhook dispatcher** in the outer 
 - If a process fails after the receiver accepts an event but before the acknowledgment commits, the lease expires and the event may be **delivered again**. Therefore this design provides **at-least-once attempts**, never guaranteed exactly-once delivery.
 - No redirects are followed; the operator-controlled target must be HTTPS. Raw tokens, full response bodies and exception details are not logged.
 
-**Versioned migration note:** The project has two EF Core migrations: `BaseCompetition` and `DurableOutbox`. The integration suite checks fresh installation, upgrading from the first version without losing existing records, rerunning migrations, and model-snapshot drift. The Development-only `Database__BootstrapOnStart=true` flag now calls `MigrateAsync`, **not** `EnsureCreated`. An older database previously created with `EnsureCreated` has no EF migration history and must be backed up and explicitly baselined/migrated; do not blindly run migrations or delete valuable data. Production schema changes require a reviewed deployment step, not web-host startup.
+**Versioned migration note:** The project has three EF Core migrations: `BaseCompetition`, `DurableOutbox`, and `InboxProjection`. The integration suite checks fresh installation, upgrading from the first version without losing existing records, rerunning migrations, and model-snapshot drift. The Development-only `Database__BootstrapOnStart=true` flag now calls `MigrateAsync`, **not** `EnsureCreated`. An older database previously created with `EnsureCreated` has no EF migration history and must be backed up and explicitly baselined/migrated; do not blindly run migrations or delete valuable data. Production schema changes require a reviewed deployment step, not web-host startup.
 
-Test evidence includes real PostgreSQL `SKIP LOCKED` competition, lease recovery, wrong-token rejection, retry/dead-letter behavior, and an HTTP fake-handler verifying delivery classification. This does **not** demonstrate a live remote receiver or a complete operator re-drive workflow.
+Test evidence includes real PostgreSQL `SKIP LOCKED` competition, lease recovery, wrong-token rejection, retry/dead-letter behavior, and an HTTP fake-handler verifying delivery classification. This does **not** demonstrate a separately deployed production receiver or a complete operator re-drive workflow.
 
 
 ## Verified full-stack sample journey
@@ -195,4 +195,17 @@ These are application/Domain policies; PostgreSQL is an **outer implementation d
 ## Migration and transaction-cutoff verification (revision-specific)
 
 [GitHub Actions run 39386303105](https://github.com/sky1116/clean-architecture-sample/actions/runs/39386303105) passed **76 tests** at this revision: **22 real PostgreSQL integration tests** plus 54 unit/architecture/web/adapter tests, and the three-language documentation gate. The PostgreSQL tests include upgrading from the base migration without data loss, reapplying migrations, EF model-snapshot comparison, deadline checks inside transactions, repeated accepted requests after closure, and concurrent enrollment. These counts are evidence for this revision, not a guarantee for future changes.
+
+
+## Inbound webhook and durable Inbox reference
+
+This project now includes a **sample receiver endpoint**, `POST /api/integrations/result-events`, disabled by default. Enable it only for trusted server-to-server integration with `Inbox__Enabled=true` and a separately provisioned `Inbox__WebhookSigningKeyBase64` (at least 32 random bytes). Configure the sending side with `Outbox__WebhookSigningKeyBase64` using the **same trusted secret** and an operator-controlled HTTPS `Outbox__WebhookUrl`. Neither key belongs in source control or a player client.
+
+The sender signs the **exact outgoing JSON bytes** with HMAC-SHA256; the receiver verifies the `X-Webhook-Signature: v1=...` header **before parsing** the body. It also checks `X-Event-Id`, `X-Event-Type`, schema version, event identities and an 8 KiB payload limit. Any missing, incorrect or modified signature is rejected. The receiver is an educational integration endpoint in the modular monolith, **not an independently deployed production receiver**.
+
+The inward-facing `ReceiveResultEventInteractor` delegates atomic persistence through `IResultInboxPort`; the outer PostgreSQL adapter commits an **Inbox receipt and independent `ReceivedResults` projection in one transaction**. The authoritative `Results` table and public leaderboard are not updated by inbound webhook data. Original results and corrections are revisioned: same `EventId` + same body is a harmless duplicate; same ID with changed body is a conflict; an out-of-order correction returns HTTP 503 so the sender can retry. Revisions must arrive in order, and persistent missing dependencies can eventually dead-letter upstream.
+
+The real HTTP/PostgreSQL test checks a valid signature, rejection of forged/tampered requests, duplicate submissions, conflicting payloads, out-of-order dependencies, disabled endpoint and oversized input. PostgreSQL integration tests additionally validate simultaneous deliveries, restart replay, unique constraints and projection consistency. The receiver's Inbox is **not** an assertion of end-to-end exactly-once messaging or independent external network validation.
+
+[Verified Inbox HTTP/PostgreSQL CI, 94 tests](https://github.com/sky1116/clean-architecture-sample/actions/runs/39390851699): 34 PostgreSQL integration tests plus 60 other tests and documentation checks. This count is revision-specific.
 
