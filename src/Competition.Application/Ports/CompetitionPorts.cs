@@ -5,7 +5,7 @@ namespace Competition.Application.Ports;
 
 /// <summary>Time is a dependency so boundary and expiry tests can use a controlled clock.</summary>
 public interface IUtcClock { DateTimeOffset UtcNow { get; } }
-public interface IResultIdGenerator { Guid Next() ; }
+public interface IResultUuidSource { Guid Next() ; }
 
 public interface ICompetitionGateway
 {

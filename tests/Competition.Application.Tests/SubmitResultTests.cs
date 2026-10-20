@@ -10,7 +10,7 @@ public sealed class SubmitResultTests
 {
     private static readonly DateTimeOffset Start = new(2027, 1, 1, 0, 0, 0, TimeSpan.Zero);
     private sealed class Clock : IUtcClock { public DateTimeOffset UtcNow => Start.AddMinutes(2); }
-    private sealed class Ids : IResultIdGenerator { public Guid Next() => Guid.Parse("00000000-0000-0000-0000-000000000099"); }
+    private sealed class Ids : IResultUuidSource { public Guid Next() => Guid.Parse("00000000-0000-0000-0000-000000000099"); }
     private sealed class Presenter : ISubmitResultOutputBoundary
     {
         public SubmitResultOutput? Response { get; private set; }

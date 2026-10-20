@@ -22,7 +22,7 @@ public sealed class SubmitResultInteractor(
     IResultEvidencePort evidence,
     IResultGateway results,
     IUtcClock clock,
-    IResultIdGenerator ids) : ISubmitResultInputBoundary
+    IResultUuidSource ids) : ISubmitResultInputBoundary
 {
     public async Task ExecuteAsync(SubmitResultInput input, ISubmitResultOutputBoundary output,
         CancellationToken cancellationToken)
