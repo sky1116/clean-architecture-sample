@@ -48,6 +48,10 @@ public sealed class PostgresEnrollmentGateway(CompetitionDbContext database) : I
     public async Task<EnrollmentWriteStatus> RegisterAsync(Guid competitionId, Guid participantId,
         CancellationToken cancellationToken)
     {
+        // Handle repeated registration within a single scoped DbContext before EF starts tracking
+        // a second instance with the same composite primary key.
+        if (await ExistsAsync(competitionId, participantId, cancellationToken))
+            return EnrollmentWriteStatus.AlreadyExists;
         database.Enrollments.Add(new EnrollmentRow { CompetitionId = competitionId, ParticipantId = participantId });
         try
         {
