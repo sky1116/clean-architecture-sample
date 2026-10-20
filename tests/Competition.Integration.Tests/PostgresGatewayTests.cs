@@ -134,4 +134,53 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
                 other, "request-other", "second", CancellationToken.None)).Status);
         }
     }
+    [Fact]
+    public async Task Append_only_corrections_update_rankings_and_preserve_full_personal_history()
+    {
+        var competitionId = Guid.NewGuid();
+        var participantId = Guid.NewGuid();
+        var original = VerifiedResult.Create(Guid.NewGuid(), competitionId, participantId, 65,
+            Now, "evidence-to-correct");
+        await using (var context = Context())
+        {
+            Assert.Equal(ResultWriteStatus.Created, (await new PostgresResultGateway(context)
+                .AppendAsync(original, "original-key", "original-fingerprint", CancellationToken.None)).Status);
+        }
+        await using (var context = Context())
+        {
+            var correction = new PostgresCorrectionGateway(context);
+            Assert.Equal(new CorrectionOutcome(CorrectionStatus.Applied, 1), await correction.AppendAsync(
+                competitionId, original.Id, Guid.NewGuid(), 0, 40,
+                "Verified referee correction", Now.AddMinutes(1), CancellationToken.None));
+            Assert.Equal(CorrectionStatus.VersionConflict, (await correction.AppendAsync(
+                competitionId, original.Id, Guid.NewGuid(), 0, 90,
+                "Stale competing correction", Now.AddMinutes(2), CancellationToken.None)).Status);
+        }
+        await using (var context = Context())
+        {
+            var corrections = new PostgresCorrectionGateway(context);
+            Assert.Equal(new CorrectionOutcome(CorrectionStatus.Applied, 2), await corrections.AppendAsync(
+                competitionId, original.Id, Guid.NewGuid(), 1, 55,
+                "New referee evidence", Now.AddMinutes(3), CancellationToken.None));
+        }
+        await using (var context = Context())
+        {
+            var effective = await new PostgresResultGateway(context).ReadCompetitionAsync(
+                competitionId, CancellationToken.None);
+            Assert.Single(effective);
+            Assert.Equal(55, effective[0].Points);
+        }
+        await using (var context = Context())
+        {
+            var history = await new PostgresParticipantHistoryGateway(context).ReadAsync(
+                competitionId, participantId, CancellationToken.None);
+            Assert.Equal(3, history.Count);
+            Assert.Equal(new[] { 55, 40, 65 }, history.Select(x => x.Points));
+            Assert.Equal(new[] { 2, 1, 0 }, history.Select(x => x.Revision));
+            Assert.Equal(3, await context.AuditEntries.CountAsync());
+            Assert.Equal(2, await context.Corrections.CountAsync());
+            Assert.Equal(1, await context.Results.CountAsync());
+        }
+    }
+
 }
