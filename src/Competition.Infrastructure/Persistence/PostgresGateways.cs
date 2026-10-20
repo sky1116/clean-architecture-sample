@@ -40,7 +40,7 @@ public sealed class PostgresCompetitionGateway(CompetitionDbContext database) : 
         exception.InnerException is PostgresException { SqlState: PostgresErrorCodes.UniqueViolation };
 }
 
-public sealed class PostgresEnrollmentGateway(CompetitionDbContext database) : IEnrollmentGateway
+public sealed class PostgresEnrollmentGateway(CompetitionDbContext database, IUtcClock clock) : IEnrollmentGateway
 {
     public Task<bool> ExistsAsync(Guid competitionId, Guid participantId, CancellationToken cancellationToken) =>
         database.Enrollments.AsNoTracking().AnyAsync(x => x.CompetitionId == competitionId
@@ -51,16 +51,41 @@ public sealed class PostgresEnrollmentGateway(CompetitionDbContext database) : I
     {
         // Handle repeated registration within a single scoped DbContext before EF starts tracking
         // a second instance with the same composite primary key.
+        // A previous successful registration remains idempotently visible after the cutoff.
         if (await ExistsAsync(competitionId, participantId, cancellationToken))
             return EnrollmentWriteStatus.AlreadyExists;
+
+        await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken);
+        var stored = await database.Competitions.AsNoTracking().SingleOrDefaultAsync(
+            competition => competition.Id == competitionId, cancellationToken);
+        if (stored is null)
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return EnrollmentWriteStatus.CompetitionNotFound;
+        }
+
+        var policy = Competition.Domain.Competitions.Competition.Schedule(
+            stored.Id, stored.Name, stored.StartsAt, stored.EndsAt, stored.MaximumPoints);
+        try
+        {
+            policy.RequireRegistrationOpen(clock.UtcNow);
+        }
+        catch (DomainRuleException ex) when (ex.Code == "competition.registration_closed")
+        {
+            await transaction.RollbackAsync(cancellationToken);
+            return EnrollmentWriteStatus.Closed;
+        }
+
         database.Enrollments.Add(new EnrollmentRow { CompetitionId = competitionId, ParticipantId = participantId });
         try
         {
             await database.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
             return EnrollmentWriteStatus.Created;
         }
         catch (DbUpdateException exception) when (PostgresCompetitionGateway.IsUnique(exception))
         {
+            await transaction.RollbackAsync(cancellationToken);
             database.ChangeTracker.Clear();
             return EnrollmentWriteStatus.AlreadyExists;
         }

@@ -13,7 +13,7 @@ public interface ICompetitionGateway
     Task<bool> CreateAsync(Competition.Domain.Competitions.Competition competition, CancellationToken cancellationToken);
 }
 
-public enum EnrollmentWriteStatus { Created, AlreadyExists }
+public enum EnrollmentWriteStatus { Created, AlreadyExists, Closed, CompetitionNotFound }
 public interface IEnrollmentGateway
 {
     Task<bool> ExistsAsync(Guid competitionId, Guid participantId, CancellationToken cancellationToken);

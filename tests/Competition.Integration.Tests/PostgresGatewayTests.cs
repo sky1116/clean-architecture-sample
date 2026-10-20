@@ -40,7 +40,7 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
             Competition.Domain.Competitions.Competition.Schedule(
                 competitionId, "Seeded competition", Now.AddDays(-1),
                 Now.AddDays(1), 100), CancellationToken.None));
-        var enrollment = new PostgresEnrollmentGateway(context);
+        var enrollment = new PostgresEnrollmentGateway(context, new FixedClock(Now.AddDays(-2)));
         foreach (var participantId in participantIds)
             Assert.Equal(EnrollmentWriteStatus.Created, await enrollment.RegisterAsync(
                 competitionId, participantId, CancellationToken.None));
@@ -56,7 +56,7 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
             var competitions = new PostgresCompetitionGateway(context);
             Assert.True(await competitions.CreateAsync(Competition.Domain.Competitions.Competition.Schedule(
                 contestId, "Cup", Now.AddDays(-1), Now.AddDays(2), 100), CancellationToken.None));
-            var enrollments = new PostgresEnrollmentGateway(context);
+            var enrollments = new PostgresEnrollmentGateway(context, new FixedClock(Now.AddDays(-2)));
             Assert.Equal(EnrollmentWriteStatus.Created,
                 await enrollments.RegisterAsync(contestId, actorId, CancellationToken.None));
             Assert.Equal(EnrollmentWriteStatus.AlreadyExists,

@@ -38,7 +38,13 @@ public sealed class RegisterParticipantInteractor(ICompetitionGateway competitio
         catch (DomainRuleException ex) { output.Present(new(ex.Code)); return; }
         var status = await enrollments.RegisterAsync(input.CompetitionId, input.AuthenticatedParticipantId,
             cancellationToken);
-        output.Present(new(status == EnrollmentWriteStatus.Created
-            ? "registration.accepted" : "registration.already_registered"));
+        output.Present(new(status switch
+        {
+            EnrollmentWriteStatus.Created => "registration.accepted",
+            EnrollmentWriteStatus.AlreadyExists => "registration.already_registered",
+            EnrollmentWriteStatus.Closed => "competition.registration_closed",
+            EnrollmentWriteStatus.CompetitionNotFound => "competition.not_found",
+            _ => throw new InvalidOperationException("Unknown enrollment outcome")
+        }));
     }
 }
