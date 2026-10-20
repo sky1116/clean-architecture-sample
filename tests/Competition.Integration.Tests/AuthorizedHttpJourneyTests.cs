@@ -64,7 +64,7 @@ public sealed class AuthorizedHttpJourneyTests : IAsyncLifetime
                 services.PostConfigure<JwtBearerOptions>(JwtBearerDefaults.AuthenticationScheme, options =>
                 {
                     options.Authority = null;
-                    options.MetadataAddress = null;
+                    options.MetadataAddress = string.Empty;
                     options.MapInboundClaims = false;
                     options.TokenValidationParameters = new TokenValidationParameters
                     {
