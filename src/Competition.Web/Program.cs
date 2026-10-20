@@ -10,6 +10,9 @@ using Competition.Infrastructure.Persistence;
 using Competition.Infrastructure.Security;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using OpenTelemetry.Metrics;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -87,6 +90,22 @@ builder.Services.AddRateLimiter(options =>
         }));
 });
 builder.Services.AddProblemDetails();
+
+// All instrumentation stays at the outermost framework boundary.
+// The collector is opt-in: a local checkout sends no telemetry over the network.
+var exportOtlp = builder.Configuration.GetValue<bool>("Telemetry:ExportOtlp");
+builder.Services.AddOpenTelemetry()
+    .ConfigureResource(resource => resource.AddService("competition-platform"))
+    .WithTracing(tracing =>
+    {
+        tracing.AddAspNetCoreInstrumentation();
+        if (exportOtlp) tracing.AddOtlpExporter();
+    })
+    .WithMetrics(metrics =>
+    {
+        metrics.AddAspNetCoreInstrumentation();
+        if (exportOtlp) metrics.AddOtlpExporter();
+    });
 
 var app = builder.Build();
 app.UseExceptionHandler(handler =>
@@ -193,8 +212,7 @@ app.MapGet("/api/competitions/{competitionId:guid}/me/history", async (
 
 app.Run();
 
-static IResult ToHttp(ApiViewModel response) =>
-    Results.Json(new { code = response.Code, data = response.Data }, statusCode: response.StatusCode);
+static IResult ToHttp(ApiViewModel response) => new HttpApiResult(response);
 
 public sealed record CreateCompetitionHttp(string Name, DateTimeOffset StartsAt, DateTimeOffset EndsAt, int MaximumPoints);
 public sealed record SubmitResultHttp(string OpaqueEvidence);
