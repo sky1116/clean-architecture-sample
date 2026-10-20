@@ -80,7 +80,7 @@ builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = 429;
     options.AddPolicy("submissions", context => RateLimitPartition.GetFixedWindowLimiter(
-        context.User.FindFirst("sub")?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+        RequestRateLimitKey.From(context.User, context.Connection.RemoteIpAddress),
         _ => new FixedWindowRateLimiterOptions
         {
             PermitLimit = 10,
@@ -114,7 +114,7 @@ app.UseExceptionHandler(handler =>
         var logger = context.RequestServices.GetRequiredService<ILoggerFactory>()
             .CreateLogger("ApplicationFailure");
         var error = context.Features.Get<IExceptionHandlerFeature>()?.Error;
-        logger.LogError(error, "Request failed. TraceId={TraceId}, FailureType={FailureType}",
+        logger.LogError("Request failed. TraceId={TraceId}, FailureType={FailureType}",
             context.TraceIdentifier, error?.GetType().Name);
         context.Response.StatusCode = 500;
         await Results.Problem(statusCode: 500, title: "Unexpected error",
