@@ -86,6 +86,29 @@ builder.Services.AddRateLimiter(options =>
 });
 builder.Services.AddProblemDetails();
 
+// External delivery is explicitly opt-in; a plain checkout does not call network endpoints.
+// The target is configured by the operator, not by request data or an outbox payload.
+if (builder.Configuration.GetValue<bool>("Outbox:Enabled"))
+{
+    var raw = builder.Configuration["Outbox:WebhookUrl"];
+    if (!Uri.TryCreate(raw, UriKind.Absolute, out var endpoint)
+        || endpoint.Scheme != Uri.UriSchemeHttps || endpoint.UserInfo.Length != 0
+        || !string.IsNullOrEmpty(endpoint.Fragment))
+        throw new InvalidOperationException("Enabled Outbox requires a secure HTTPS WebhookUrl.");
+    builder.Services.AddScoped<IOutboxDeliveryStore, PostgresOutboxDeliveryStore>();
+    builder.Services.AddSingleton(TimeProvider.System);
+    builder.Services.AddHttpClient("outbox-delivery", client =>
+    {
+        client.Timeout = TimeSpan.FromSeconds(10);
+    })
+    .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
+    builder.Services.AddSingleton<IOutboxEventSink>(services =>
+        new HttpOutboxEventSink(services.GetRequiredService<IHttpClientFactory>()
+            .CreateClient("outbox-delivery"), endpoint));
+    builder.Services.AddHostedService<OutboxDispatchWorker>();
+}
+
+
 // All instrumentation stays at the outermost framework boundary.
 // The collector is opt-in: a local checkout sends no telemetry over the network.
 var exportOtlp = builder.Configuration.GetValue<bool>("Telemetry:ExportOtlp");
