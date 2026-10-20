@@ -1,6 +1,7 @@
 using Competition.Application.Ports;
 using Competition.Application.UseCases;
 using Competition.Infrastructure.Persistence;
+using Competition.Domain.Results;
 using Microsoft.EntityFrameworkCore;
 
 namespace Competition.Infrastructure.Delivery;
@@ -30,34 +31,32 @@ public sealed class PostgresResultInboxGateway(CompetitionDbContext database, IU
             x => x.CompetitionId == input.CompetitionId && x.ResultId == input.ResultId,
             cancellationToken);
 
-        if (input.EventType == "competition.result.accepted.v1")
+        // All version-order and score policy comes from the inward Domain entity,
+        // not from copied PostgreSQL checks.
+        var current = projection is null ? null
+            : new ReceivedResultPolicy.State(projection.ParticipantId,
+                projection.EffectivePoints, projection.Revision);
+        var decision = ReceivedResultPolicy.Decide(current,
+            input.EventType == "competition.result.accepted.v1",
+            input.ParticipantId, input.Points, input.Revision);
+        if (decision.Kind != ReceivedResultPolicy.DecisionKind.Applied)
         {
-            if (projection is not null)
-            {
-                await transaction.RollbackAsync(cancellationToken);
-                return InboxWriteStatus.Conflict;
-            }
+            await transaction.RollbackAsync(cancellationToken);
+            return decision.Kind == ReceivedResultPolicy.DecisionKind.DependencyMissing
+                ? InboxWriteStatus.DependencyMissing : InboxWriteStatus.Conflict;
+        }
+        var next = decision.Next!;
+        if (projection is null)
             database.ReceivedResults.Add(new ReceivedResultRow
             {
                 CompetitionId = input.CompetitionId, ResultId = input.ResultId,
-                ParticipantId = input.ParticipantId!.Value,
-                EffectivePoints = input.Points, Revision = 0
+                ParticipantId = next.ParticipantId,
+                EffectivePoints = next.EffectivePoints, Revision = next.Revision
             });
-        }
         else
         {
-            if (projection is null || projection.Revision < input.Revision - 1)
-            {
-                await transaction.RollbackAsync(cancellationToken);
-                return InboxWriteStatus.DependencyMissing;
-            }
-            if (projection.Revision != input.Revision - 1)
-            {
-                await transaction.RollbackAsync(cancellationToken);
-                return InboxWriteStatus.Conflict;
-            }
-            projection.EffectivePoints = input.Points;
-            projection.Revision = input.Revision;
+            projection.EffectivePoints = next.EffectivePoints;
+            projection.Revision = next.Revision;
         }
 
         database.InboxReceipts.Add(new InboxReceiptRow
