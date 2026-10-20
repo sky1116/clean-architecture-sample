@@ -16,11 +16,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '10.0.x'
-      - name: Domain, use case and adapter tests
+      - name: Unit and application boundary tests
         run: |
           dotnet test tests/Competition.Domain.Tests/Competition.Domain.Tests.csproj --configuration Release
           dotnet test tests/Competition.Application.Tests/Competition.Application.Tests.csproj --configuration Release
           dotnet test tests/Competition.Adapters.Tests/Competition.Adapters.Tests.csproj --configuration Release
+          dotnet test tests/Competition.Infrastructure.Tests/Competition.Infrastructure.Tests.csproj --configuration Release
+          dotnet test tests/Competition.Web.Tests/Competition.Web.Tests.csproj --configuration Release
       - name: Publication hygiene
         env:
           PUBLICATION_RESTRICTED_TERMS: ${{ secrets.PUBLICATION_RESTRICTED_TERMS }}
