@@ -130,7 +130,7 @@ Prerequisites: .NET 10 SDK, Docker for PostgreSQL, and a **separate OIDC identit
    - `Authentication__Authority`: HTTPS OIDC issuer URL
    - `Authentication__Audience`: API audience expected in validated tokens
    - `TrustedAuthority__SigningKeyBase64`: base64 of at least 32 random secret bytes, shared **only with the trusted result issuer**
-   - `Database__BootstrapOnStart=true`: **Development only**, creates a new schema on startup; not a migration strategy
+   - `Database__BootstrapOnStart=true`: **Development only**, applies the two checked-in versioned EF Core migrations to a fresh/migration-managed database; never applies automatically outside Development
 
 4. Run `dotnet run --project src/Competition.Web/Competition.Web.csproj --environment Development`.
 5. Call `GET /health` to check liveness; authenticate against your configured issuer for protected endpoints.
@@ -154,7 +154,7 @@ The integration suite starts disposable real PostgreSQL containers and covers tr
 
 ## Explicit limitations and next work
 
-This project is an educational modular monolith, **not a finished production service**. In particular, it does not bundle an OIDC provider, game authority/issuer, versioned migrations, comprehensive anti-cheat checks, historical finalized leaderboard snapshots, a proven production webhook receiver, exactly-once event processing, operator dead-letter redrive tools, or fault-tolerant multi-system delivery. Registration and result expiry race windows require further transaction-bound policies before production use. Only a passing CI run supports claims about executed tests, and a green CI check does not establish complete security or book-level conformity. This separation between **the book's dependency principles** and **our engineering choices** is intentional.
+This project is an educational modular monolith, **not a finished production service**. In particular, it does not bundle an OIDC provider, game authority/issuer, comprehensive anti-cheat checks, historical finalized leaderboard snapshots, a proven production webhook receiver, exactly-once event processing, operator dead-letter redrive tools, or fault-tolerant multi-system delivery. Registration and result expiry race windows require further transaction-bound policies before production use. Only a passing CI run supports claims about executed tests, and a green CI check does not establish complete security or book-level conformity. This separation between **the book's dependency principles** and **our engineering choices** is intentional.
 
 ## Opt-in Outbox delivery: semantics and operations
 
@@ -168,7 +168,7 @@ The sample now implements an **optional HTTPS webhook dispatcher** in the outer 
 - If a process fails after the receiver accepts an event but before the acknowledgment commits, the lease expires and the event may be **delivered again**. Therefore this design provides **at-least-once attempts**, never guaranteed exactly-once delivery.
 - No redirects are followed; the operator-controlled target must be HTTPS. Raw tokens, full response bodies and exception details are not logged.
 
-**Development database reminder:** `EnsureCreated` only creates an empty schema. It does **not** update an existing local database when new outbox columns are added. Do not apply destructive resets to data you intend to keep. Proper versioned migrations remain outstanding.
+**Versioned migration note:** The project has two EF Core migrations: `BaseCompetition` and `DurableOutbox`. The integration suite checks fresh installation, upgrading from the first version without losing existing records, rerunning migrations, and model-snapshot drift. The Development-only `Database__BootstrapOnStart=true` flag now calls `MigrateAsync`, **not** `EnsureCreated`. An older database previously created with `EnsureCreated` has no EF migration history and must be backed up and explicitly baselined/migrated; do not blindly run migrations or delete valuable data. Production schema changes require a reviewed deployment step, not web-host startup.
 
 Test evidence includes real PostgreSQL `SKIP LOCKED` competition, lease recovery, wrong-token rejection, retry/dead-letter behavior, and an HTTP fake-handler verifying delivery classification. This does **not** demonstrate a live remote receiver or a complete operator re-drive workflow.
 

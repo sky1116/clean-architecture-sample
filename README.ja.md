@@ -134,7 +134,7 @@ CI の成功を確認するまでは、**全テスト PASS と主張しません
    - `Authentication__Authority`：HTTPS の OIDC Issuer URL
    - `Authentication__Audience`：検証対象の API Audience
    - `TrustedAuthority__SigningKeyBase64`：最低 32 バイトのランダムな秘密情報を Base64 化したもの。**信頼された判定端末以外と共有しません**
-   - `Database__BootstrapOnStart=true`：**Development 専用**の初期スキーマ作成。正式な Migration ではありません
+   - `Database__BootstrapOnStart=true`：**Development 専用**。空、または Migration 管理下の DB にチェックイン済みの二つの EF Core Migration を適用します。本番環境では自動実行しません
 
 4. `dotnet run --project src/Competition.Web/Competition.Web.csproj --environment Development` を実行します。
 5. `GET /health` でプロセスの生存を確認します。保護対象 API は検証済み Access Token が必要です。
@@ -158,7 +158,7 @@ python3 scripts/check_publication.py
 
 ## 明示的な限界と今後の課題
 
-このプロジェクトは**教育用モジュラーモノリス**であり、本番稼働が完成しているわけではありません。OIDC 提供者、信頼されたゲーム判定／発行サービス、本番 DB Migration、完全な不正検知、確定時点のランキング Snapshot、本番向け Webhook 受信サービス、Exactly-once 処理、Dead Letter の運用者再送機能、分散システム間の配送保証は含まれません。参加登録や提出締切の競合については、本番導入の前にトランザクション内の追加対策が必要です。テスト結果は成功した CI の実行記録に基づいてのみ主張できます。緑の CI は完全な安全性や書籍への完全な適合証明ではありません。**書籍の依存性ルール**と**本サンプル独自の実務的な選択**を明確に区別しています。
+このプロジェクトは**教育用モジュラーモノリス**であり、本番稼働が完成しているわけではありません。OIDC 提供者、信頼されたゲーム判定／発行サービス、完全な不正検知、確定時点のランキング Snapshot、本番向け Webhook 受信サービス、Exactly-once 処理、Dead Letter の運用者再送機能、分散システム間の配送保証は含まれません。参加登録や提出締切の競合については、本番導入の前にトランザクション内の追加対策が必要です。テスト結果は成功した CI の実行記録に基づいてのみ主張できます。緑の CI は完全な安全性や書籍への完全な適合証明ではありません。**書籍の依存性ルール**と**本サンプル独自の実務的な選択**を明確に区別しています。
 
 ## オプトイン Outbox 配信と保証範囲
 
@@ -172,7 +172,7 @@ python3 scripts/check_publication.py
 - 受信先の処理後、確認保存前に送信側が停止した場合は Lease 期限後に**再配信される可能性があります**。これは **At-least-once の試行**であり、Exactly-once ではありません。
 - リダイレクトを追わず、管理者が設定した HTTPS 宛先だけを利用します。秘密情報や HTTP 応答本文はログへ出力しません。
 
-**開発データベースについて：** `EnsureCreated` は空の Schema 作成専用です。既存データベースに Outbox 列を追加することはできません。破棄可能な開発環境以外では不用意にリセットしないでください。正式な Migration は今後の作業です。
+**バージョン付き Migration：** `BaseCompetition` と `DurableOutbox` の EF Core Migration をチェックインしています。統合テストで新規構築、既存データを保持した更新、再実行、Model Snapshot の差分を検証します。Development 限定の `Database__BootstrapOnStart=true` は現在 `EnsureCreated` ではなく `MigrateAsync` を呼びます。以前 `EnsureCreated` で作成した DB には Migration History がないため、バックアップと慎重な基準移行が必要です。貴重なデータを削除したり、無条件で更新したりしてはいけません。本番環境では Web 起動時ではなく独立したレビュー済みの Migration 手順を用いてください。
 
 実際の PostgreSQL による Lease 競合、期限切れ回復、無効 Token の拒否、リトライ／Dead Letter、HTTP Handler の応答分類をテストしています。ただし**実際の外部受信サービスへの送信テスト、および手動再実行の運用画面は未実装**です。
 
