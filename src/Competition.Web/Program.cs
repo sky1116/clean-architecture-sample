@@ -1,3 +1,4 @@
+using Competition.Web;
 using System.Security.Claims;
 using System.Threading.RateLimiting;
 using Competition.Adapters.Rest;
