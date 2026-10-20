@@ -17,7 +17,7 @@ public interface IOutboxEventSink
 /// Standard HTTP POST webhook, not a business rule. Destination comes from trusted server
 /// configuration, never from a competition participant or the event payload.
 /// </summary>
-public sealed class HttpOutboxEventSink(HttpClient client, Uri destination) : IOutboxEventSink
+public sealed class HttpOutboxEventSink(HttpClient client, Uri destination, byte[] signingKey) : IOutboxEventSink
 {
     public async Task<DeliveryResult> SendAsync(OutboxDelivery delivery, CancellationToken cancellationToken)
     {
@@ -25,17 +25,26 @@ public sealed class HttpOutboxEventSink(HttpClient client, Uri destination) : IO
             || destination.UserInfo.Length != 0 || !string.IsNullOrEmpty(destination.Fragment))
             throw new InvalidOperationException("Outbox endpoint must be an absolute HTTPS URL without credentials or fragment.");
 
+        if (signingKey.Length < 32)
+            throw new InvalidOperationException("Webhook signing requires at least 256 bits.");
+
         using var request = new HttpRequestMessage(HttpMethod.Post, destination);
         request.Headers.TryAddWithoutValidation("Idempotency-Key", delivery.Id.ToString("N"));
         request.Headers.TryAddWithoutValidation("X-Event-Id", delivery.Id.ToString("D"));
         request.Headers.TryAddWithoutValidation("X-Event-Type", delivery.EventType);
-        request.Content = new StringContent(JsonSerializer.Serialize(new
+        using var payload = JsonDocument.Parse(delivery.Payload);
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(new
         {
             EventId = delivery.Id,
             delivery.CompetitionId,
             delivery.EventType,
-            Payload = JsonDocument.Parse(delivery.Payload).RootElement
-        }), Encoding.UTF8, "application/json");
+            Payload = payload.RootElement
+        });
+        // Sign the exact bytes actually sent, not the in-memory object.
+        request.Headers.TryAddWithoutValidation("X-Webhook-Signature",
+            WebhookSignature.Create(bytes, signingKey));
+        request.Content = new ByteArrayContent(bytes);
+        request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         try
         {
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,

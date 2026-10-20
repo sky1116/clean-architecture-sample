@@ -105,7 +105,9 @@ if (builder.Configuration.GetValue<bool>("Outbox:Enabled"))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
     builder.Services.AddSingleton<IOutboxEventSink>(services =>
         new HttpOutboxEventSink(services.GetRequiredService<IHttpClientFactory>()
-            .CreateClient("outbox-delivery"), endpoint));
+            .CreateClient("outbox-delivery"), endpoint,
+            WebhookSignature.ReadKey(services.GetRequiredService<IConfiguration>()
+                ["Outbox:WebhookSigningKeyBase64"])));
     builder.Services.AddHostedService<OutboxDispatchWorker>();
 }
 
