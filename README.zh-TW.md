@@ -158,7 +158,7 @@ python3 scripts/check_publication.py
 
 ## 明確保留的限制
 
-本專案是**教學型模組化單體**，不是完整的正式上線產品。目前不內建 OIDC 提供者、可信遊戲裁定端、完整反作弊機制、賽季結算排名快照、正式 Webhook 接收端、Exactly-once 訊息處理、Dead Letter 管理者重送工具或跨系統可靠投遞驗收。正式使用前，報名／成績提交與截止時間之間的競態也需要更嚴格的交易內驗證。必須由成功執行的 CI 提供測試證據；CI 綠燈不等於所有安全性或書中原則都已取得最終簽核。**書中架構規則**與**本範例採用的工程實作策略**明確分開。
+本專案是**教學型模組化單體**，不是完整的正式上線產品。目前不內建 OIDC 提供者、可信遊戲裁定端、完整反作弊機制、賽季結算排名快照、正式 Webhook 接收端、Exactly-once 訊息處理、Dead Letter 管理者重送工具或跨系統可靠投遞驗收。報名與成績寫入現已在 PostgreSQL 交易內重新呼叫 Domain 規則；判定時間是交易內的受信任 UTC Clock，不是 Commit 時間。若需要嚴格的資料庫提交時間截止線，或允許其他寫入者修改競賽期限，仍需額外設計與驗證。必須由成功執行的 CI 提供測試證據；CI 綠燈不等於所有安全性或書中原則都已取得最終簽核。**書中架構規則**與**本範例採用的工程實作策略**明確分開。
 
 ## 可選啟用的 Outbox 送達流程與限制
 
@@ -182,4 +182,16 @@ python3 scripts/check_publication.py
 `AuthorizedHttpJourneyTests` 使用**真正的 ASP.NET Core HTTP Pipeline 與 PostgreSQL Testcontainers**，搭配只存在測試環境的有效簽章 JWT 和可信 HMAC 收據，實際走完競賽建立、報名、首次提交、相同冪等鍵重送、排行榜、個人歷史、管理者成績更正，以及資料庫的 Audit / Outbox 驗證。
 
 這是**測試專用的本地簽發者**，不等於外部 OIDC 服務或正式遊戲裁定系統。實際成功紀錄：[GitHub Actions 39380576833](https://github.com/sky1116/clean-architecture-sample/actions/runs/39380576833)，當時 **67 項測試通過，包含 13 項 PostgreSQL 整合測試**，另有文件檢查成功；測試數量會隨後續版本調整。
+
+
+## 寫入交易中的資格與時間判定
+
+系統採**兩層不同時機、同一套業務規則**：Use Case 先拒絕明顯不合法的輸入；真正寫入時，PostgreSQL Gateway 在交易內重新取得正式競賽與報名狀態，再呼叫**同一個 Domain Entity 規則**，不複製第二份時間／分數公式。
+
+- 先前已成功的報名或成績提交，即使賽事已截止，仍可正確回傳冪等結果，但不得寫入第二筆。
+- 新報名若超過 `StartsAt`、新成績超出 `StartsAt`～`EndsAt`、或參賽者未報名，都在交易內拒絕，並不得新增正式成績、收據、Audit 與 Outbox。
+- 時間判定依據交易內的受信任 `IUtcClock`，**不是 HTTP 抵達時間，也不是資料庫 Commit 時間**。本 Sample 假設競賽時段與已報名紀錄一旦建立就不可變；這並不構成嚴格的提交瞬間截止保證。
+- 真實 PostgreSQL 整合測試驗證跨截止時間、未報名、重送冪等與競爭報名。
+
+**Domain 負責規則，Infrastructure 負責交易與持久化**，避免任何框架成為第二套業務規則來源。
 

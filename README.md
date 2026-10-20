@@ -154,7 +154,7 @@ The integration suite starts disposable real PostgreSQL containers and covers tr
 
 ## Explicit limitations and next work
 
-This project is an educational modular monolith, **not a finished production service**. In particular, it does not bundle an OIDC provider, game authority/issuer, comprehensive anti-cheat checks, historical finalized leaderboard snapshots, a proven production webhook receiver, exactly-once event processing, operator dead-letter redrive tools, or fault-tolerant multi-system delivery. Registration and result expiry race windows require further transaction-bound policies before production use. Only a passing CI run supports claims about executed tests, and a green CI check does not establish complete security or book-level conformity. This separation between **the book's dependency principles** and **our engineering choices** is intentional.
+This project is an educational modular monolith, **not a finished production service**. In particular, it does not bundle an OIDC provider, game authority/issuer, comprehensive anti-cheat checks, historical finalized leaderboard snapshots, a proven production webhook receiver, exactly-once event processing, operator dead-letter redrive tools, or fault-tolerant multi-system delivery. Enrollment and result writes now recheck Domain policies inside PostgreSQL transactions using a trusted server-side UTC clock. The policy decision is timed at the in-transaction check, **not** at database commit. Stronger commit-time/DB-clock guarantees and multi-writer scheduling changes require additional production design. Only a passing CI run supports claims about executed tests, and a green CI check does not establish complete security or book-level conformity. This separation between **the book's dependency principles** and **our engineering choices** is intentional.
 
 ## Opt-in Outbox delivery: semantics and operations
 
@@ -178,4 +178,16 @@ Test evidence includes real PostgreSQL `SKIP LOCKED` competition, lease recovery
 The integration test `AuthorizedHttpJourneyTests` now executes a **real ASP.NET Core HTTP request pipeline against a real PostgreSQL Testcontainers database**, with locally generated, cryptographically valid test JWTs and trusted HMAC receipts. It covers competition creation, enrollment, first submission, replay under the same idempotency key, leaderboard, personal history, administrator correction, and durable audit/outbox state.
 
 This is a test-only issuer and signature authority, **not an external OIDC provider or production game verification service**. The validated CI evidence is [workflow run 39380576833](https://github.com/sky1116/clean-architecture-sample/actions/runs/39380576833): 67 tests passed, including 13 PostgreSQL integration tests, plus the documentation gate. Counts are specific to that revision and may change as tests are added.
+
+
+## Write-time admission policy and concurrency
+
+Two checks serve different purposes: **Use Cases** reject clearly invalid submissions early, while **PostgreSQL Gateways** re-read the authoritative competition and enrollment state **inside the write transaction** and reuse the **Domain Entity methods**, not copied date/score formulas. In particular:
+
+- Existing accepted requests or registrations remain idempotently readable after a competition closes; a new attempt does not silently create new state.
+- Newly registering after `StartsAt`, submitting before `StartsAt` or after `EndsAt`, and submitting without an enrollment are rejected in the transaction, leaving results, receipts, audit entries and outbox records unchanged.
+- The accepted policy time is the trusted `IUtcClock` reading during the transaction, **not HTTP arrival or transaction commit time**. The example treats competition rules and participant enrollment as immutable after creation. Do not claim that this gives a strict database-commit-time cutoff or protects against external writers changing the competition table.
+- PostgreSQL container tests cover closed registration, same-user concurrency, accepted replay after cutoff, expired result writes, and missing enrollment.
+
+These are application/Domain policies; PostgreSQL is an **outer implementation detail** used to atomically enforce them, not a second source of business rules.
 
