@@ -91,6 +91,7 @@ public sealed class SubmitResultInteractor(
             ResultWriteStatus.CompetitionNotFound => new SubmitResultOutput("competition.not_found"),
             ResultWriteStatus.CompetitionClosed => new SubmitResultOutput("competition.not_active"),
             ResultWriteStatus.NotEnrolled => new SubmitResultOutput("participant.not_enrolled"),
+            ResultWriteStatus.InvalidPoints => new SubmitResultOutput("result.points_out_of_range"),
             _ => new SubmitResultOutput("result.idempotency_conflict")
         });
     }

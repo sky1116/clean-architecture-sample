@@ -29,7 +29,7 @@ public interface IResultEvidencePort
         CancellationToken cancellationToken);
 }
 
-public enum ResultWriteStatus { Created, Replayed, Conflict, CompetitionNotFound, CompetitionClosed, NotEnrolled }
+public enum ResultWriteStatus { Created, Replayed, Conflict, CompetitionNotFound, CompetitionClosed, NotEnrolled, InvalidPoints }
 public sealed record ResultWriteOutcome(ResultWriteStatus Status, VerifiedResult? Result);
 
 public interface IResultGateway

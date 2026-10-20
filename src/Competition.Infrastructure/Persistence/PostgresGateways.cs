@@ -1,5 +1,6 @@
 using Competition.Application.Ports;
 using System.Data;
+using Competition.Domain;
 using Competition.Domain.Competitions;
 using Competition.Domain.Results;
 using Microsoft.EntityFrameworkCore;
@@ -93,12 +94,21 @@ public sealed class PostgresResultGateway(CompetitionDbContext database, IUtcClo
             await transaction.RollbackAsync(cancellationToken);
             return new(ResultWriteStatus.CompetitionNotFound, null);
         }
-        var dbCheckAt = clock.UtcNow;
-        if (dbCheckAt.Offset != TimeSpan.Zero ||
-            dbCheckAt < competition.StartsAt || dbCheckAt >= competition.EndsAt)
+        // Reuse inner Entity policy, rather than copying business conditions into EF code.
+        var competitionPolicy = Competition.Domain.Competitions.Competition.Schedule(
+            competition.Id, competition.Name, competition.StartsAt, competition.EndsAt,
+            competition.MaximumPoints);
+        try
+        {
+            competitionPolicy.RequireResultWindow(clock.UtcNow);
+            competitionPolicy.RequireValidPoints(proposed.Points);
+        }
+        catch (DomainRuleException ex) when (ex.Code is
+            "competition.not_active" or "result.points_out_of_range")
         {
             await transaction.RollbackAsync(cancellationToken);
-            return new(ResultWriteStatus.CompetitionClosed, null);
+            return new(ex.Code == "competition.not_active"
+                ? ResultWriteStatus.CompetitionClosed : ResultWriteStatus.InvalidPoints, null);
         }
         if (!await database.Enrollments.AsNoTracking().AnyAsync(row =>
             row.CompetitionId == proposed.CompetitionId &&
@@ -107,12 +117,6 @@ public sealed class PostgresResultGateway(CompetitionDbContext database, IUtcClo
             await transaction.RollbackAsync(cancellationToken);
             return new(ResultWriteStatus.NotEnrolled, null);
         }
-        if (proposed.Points < 0 || proposed.Points > competition.MaximumPoints)
-        {
-            await transaction.RollbackAsync(cancellationToken);
-            return new(ResultWriteStatus.Conflict, null);
-        }
-
         var sameEvidence = await database.Results.AsNoTracking().AnyAsync(
             x => x.CompetitionId == proposed.CompetitionId && x.EvidenceId == proposed.EvidenceId,
             cancellationToken);
