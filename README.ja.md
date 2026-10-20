@@ -176,3 +176,10 @@ python3 scripts/check_publication.py
 
 実際の PostgreSQL による Lease 競合、期限切れ回復、無効 Token の拒否、リトライ／Dead Letter、HTTP Handler の応答分類をテストしています。ただし**実際の外部受信サービスへの送信テスト、および手動再実行の運用画面は未実装**です。
 
+
+## 検証済みのフルスタック HTTP シナリオ
+
+`AuthorizedHttpJourneyTests` は**実際の ASP.NET Core HTTP パイプラインと PostgreSQL Testcontainers**を使用します。テスト専用の正しく署名された JWT と信頼済み HMAC 証明によって、大会作成、参加登録、結果提出、同じ冪等キーでの再送、ランキング、個人履歴、管理者による訂正、監査および Outbox の永続化を一連の API 呼び出しで検証します。
+
+これは**ローカルテスト専用の発行者**であり、外部 OIDC サービスまたは実際のゲーム判定サーバーの検証ではありません。実行証拠：[GitHub Actions 39380576833](https://github.com/sky1116/clean-architecture-sample/actions/runs/39380576833)。そのリビジョンでは**67 件のテスト（PostgreSQL 統合テスト 13 件）**とドキュメント検証が成功しました。件数は今後の変更で増減します。
+

@@ -176,3 +176,10 @@ python3 scripts/check_publication.py
 
 目前已有 PostgreSQL 真實租約競爭、接手、過期 Token 拒絕、退避與 Dead Letter，以及 HTTP Handler 回應分類測試。但**尚未驗證真實外部接收端，也還沒有完整的人工作業重送介面**。
 
+
+## 已通過的完整 HTTP 情境測試
+
+`AuthorizedHttpJourneyTests` 使用**真正的 ASP.NET Core HTTP Pipeline 與 PostgreSQL Testcontainers**，搭配只存在測試環境的有效簽章 JWT 和可信 HMAC 收據，實際走完競賽建立、報名、首次提交、相同冪等鍵重送、排行榜、個人歷史、管理者成績更正，以及資料庫的 Audit / Outbox 驗證。
+
+這是**測試專用的本地簽發者**，不等於外部 OIDC 服務或正式遊戲裁定系統。實際成功紀錄：[GitHub Actions 39380576833](https://github.com/sky1116/clean-architecture-sample/actions/runs/39380576833)，當時 **67 項測試通過，包含 13 項 PostgreSQL 整合測試**，另有文件檢查成功；測試數量會隨後續版本調整。
+

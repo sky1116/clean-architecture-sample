@@ -172,3 +172,10 @@ The sample now implements an **optional HTTPS webhook dispatcher** in the outer 
 
 Test evidence includes real PostgreSQL `SKIP LOCKED` competition, lease recovery, wrong-token rejection, retry/dead-letter behavior, and an HTTP fake-handler verifying delivery classification. This does **not** demonstrate a live remote receiver or a complete operator re-drive workflow.
 
+
+## Verified full-stack sample journey
+
+The integration test `AuthorizedHttpJourneyTests` now executes a **real ASP.NET Core HTTP request pipeline against a real PostgreSQL Testcontainers database**, with locally generated, cryptographically valid test JWTs and trusted HMAC receipts. It covers competition creation, enrollment, first submission, replay under the same idempotency key, leaderboard, personal history, administrator correction, and durable audit/outbox state.
+
+This is a test-only issuer and signature authority, **not an external OIDC provider or production game verification service**. The validated CI evidence is [workflow run 39380576833](https://github.com/sky1116/clean-architecture-sample/actions/runs/39380576833): 67 tests passed, including 13 PostgreSQL integration tests, plus the documentation gate. Counts are specific to that revision and may change as tests are added.
+
