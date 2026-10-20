@@ -355,4 +355,49 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
         }
     }
 
+    [Fact]
+    public async Task Enrollment_transaction_rejects_cutoff_after_an_initially_open_use_case()
+    {
+        var contest = Guid.NewGuid();
+        var actor = Guid.NewGuid();
+        await SeedContestAsync(contest);
+        await using var db = Context();
+        var gateway = new PostgresEnrollmentGateway(db, new FixedClock(Now));
+        Assert.Equal(EnrollmentWriteStatus.Closed, await gateway.RegisterAsync(
+            contest, actor, CancellationToken.None));
+        Assert.Empty(await db.Enrollments.AsNoTracking().Where(x => x.CompetitionId == contest).ToListAsync());
+    }
+
+    [Fact]
+    public async Task A_valid_registration_replay_after_cutoff_does_not_insert_again()
+    {
+        var contest = Guid.NewGuid();
+        var actor = Guid.NewGuid();
+        await SeedContestAsync(contest, actor);
+        await using var db = Context();
+        var gateway = new PostgresEnrollmentGateway(db, new FixedClock(Now.AddDays(2)));
+        Assert.Equal(EnrollmentWriteStatus.AlreadyExists, await gateway.RegisterAsync(
+            contest, actor, CancellationToken.None));
+        Assert.Equal(1, await db.Enrollments.CountAsync(x => x.CompetitionId == contest));
+    }
+
+    [Fact]
+    public async Task Concurrent_registration_has_one_creator_and_one_idempotent_observer()
+    {
+        var contest = Guid.NewGuid();
+        var actor = Guid.NewGuid();
+        await SeedContestAsync(contest);
+        async Task<EnrollmentWriteStatus> Register()
+        {
+            await using var db = Context();
+            return await new PostgresEnrollmentGateway(db, new FixedClock(Now.AddDays(-2)))
+                .RegisterAsync(contest, actor, CancellationToken.None);
+        }
+        var results = await Task.WhenAll(Task.Run(Register), Task.Run(Register));
+        Assert.Single(results, x => x == EnrollmentWriteStatus.Created);
+        Assert.Single(results, x => x == EnrollmentWriteStatus.AlreadyExists);
+        await using var inspect = Context();
+        Assert.Equal(1, await inspect.Enrollments.CountAsync(x => x.CompetitionId == contest));
+    }
+
 }
