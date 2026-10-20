@@ -32,28 +32,23 @@ builder.Services.AddScoped<IGetLeaderboardInputBoundary, GetLeaderboardInteracto
 builder.Services.AddScoped<IGetPersonalHistoryInputBoundary, GetPersonalHistoryInteractor>();
 builder.Services.AddScoped<CompetitionController>();
 
-var connectionString = builder.Configuration.GetConnectionString("Competitions");
-if (string.IsNullOrWhiteSpace(connectionString))
-    throw new InvalidOperationException("Set ConnectionStrings__Competitions in the environment.");
-builder.Services.AddDbContext<CompetitionDbContext>(o => o.UseNpgsql(connectionString));
+builder.Services.AddDbContext<CompetitionDbContext>((services, options) =>
+{
+    var configuration = services.GetRequiredService<IConfiguration>();
+    options.UseNpgsql(configuration.GetConnectionString("Competitions")
+        ?? throw new InvalidOperationException("Database connection must be configured."));
+});
+builder.Services.AddScoped<IResultEvidencePort>(services =>
+    new HmacResultEvidencePort(
+        WebStartupValidation.ReadSigningKey(services.GetRequiredService<IConfiguration>()),
+        services.GetRequiredService<IUtcClock>()));
+// Verify final configuration only once the host has applied all configuration providers.
+builder.Services.AddHostedService<WebStartupValidation>();
 
-var authorityKey = builder.Configuration["TrustedAuthority:SigningKeyBase64"];
-if (string.IsNullOrWhiteSpace(authorityKey))
-    throw new InvalidOperationException("Set TrustedAuthority__SigningKeyBase64 outside source control.");
-var secret = Convert.FromBase64String(authorityKey);
-if (secret.Length < 32)
-    throw new InvalidOperationException("Trusted authority key must have at least 256 bits.");
-builder.Services.AddScoped<IResultEvidencePort>(sp =>
-    new HmacResultEvidencePort(secret, sp.GetRequiredService<IUtcClock>()));
-
-var jwtAuthority = builder.Configuration["Authentication:Authority"];
-var jwtAudience = builder.Configuration["Authentication:Audience"];
-if (string.IsNullOrWhiteSpace(jwtAuthority) || string.IsNullOrWhiteSpace(jwtAudience))
-    throw new InvalidOperationException("Configure OIDC Authentication__Authority and Authentication__Audience.");
 builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme).AddJwtBearer(options =>
 {
-    options.Authority = jwtAuthority;
-    options.Audience = jwtAudience;
+    options.Authority = builder.Configuration["Authentication:Authority"];
+    options.Audience = builder.Configuration["Authentication:Audience"];
     options.RequireHttpsMetadata = true;
     // Use the issuer of the already validated token, not a request-supplied identity hint.
     options.Events = new JwtBearerEvents
