@@ -90,7 +90,7 @@ public sealed class AuthorizedHttpJourneyTests : IAsyncLifetime
         var options = new DbContextOptionsBuilder<CompetitionDbContext>()
             .UseNpgsql(_connection).Options;
         await using var context = new CompetitionDbContext(options);
-        await context.Database.EnsureCreatedAsync();
+        await context.Database.MigrateAsync();
     }
 
     public Task DisposeAsync() => _database.DisposeAsync().AsTask();

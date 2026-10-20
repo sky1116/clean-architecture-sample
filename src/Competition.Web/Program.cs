@@ -145,8 +145,9 @@ if (app.Environment.IsDevelopment() && app.Configuration.GetValue<bool>("Databas
 {
     await using var scope = app.Services.CreateAsyncScope();
     var database = scope.ServiceProvider.GetRequiredService<CompetitionDbContext>();
-    // Demo-only schema setup. A production deployment requires versioned migrations.
-    await database.Database.EnsureCreatedAsync();
+    // Development-only bootstrap applies the checked-in versioned migrations.
+    // Production deployments must use a separately reviewed migration step.
+    await database.Database.MigrateAsync();
 }
 else if (!app.Environment.IsDevelopment() && app.Configuration.GetValue<bool>("Database:BootstrapOnStart"))
 {

@@ -23,7 +23,7 @@ public sealed class OutboxDeliveryTests : IAsyncLifetime
         _options = new DbContextOptionsBuilder<CompetitionDbContext>()
             .UseNpgsql(_database.GetConnectionString()).Options;
         await using var db = Open();
-        await db.Database.EnsureCreatedAsync();
+        await db.Database.MigrateAsync();
     }
 
     public Task DisposeAsync() => _database.DisposeAsync().AsTask();

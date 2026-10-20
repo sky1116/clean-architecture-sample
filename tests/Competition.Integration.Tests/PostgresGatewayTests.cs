@@ -21,7 +21,7 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
         _options = new DbContextOptionsBuilder<CompetitionDbContext>()
             .UseNpgsql(_database.GetConnectionString()).Options;
         await using var context = Context();
-        await context.Database.EnsureCreatedAsync();
+        await context.Database.MigrateAsync();
     }
 
     public async Task DisposeAsync() => await _database.DisposeAsync();
