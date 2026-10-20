@@ -6,7 +6,7 @@ namespace Competition.Infrastructure.Persistence.Migrations;
 
 /// <summary>Adds durable integration events without modifying existing competition records.</summary>
 [DbContext(typeof(CompetitionDbContext))]
-[Migration("202610200002_DurableOutbox")]
+[Migration("20261020140200_DurableOutbox")]
 public sealed class DurableOutbox : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)

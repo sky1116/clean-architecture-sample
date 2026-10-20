@@ -6,7 +6,7 @@ namespace Competition.Infrastructure.Persistence.Migrations;
 
 /// <summary>Versioned base schema. Does not contain transport or HTTP concerns.</summary>
 [DbContext(typeof(CompetitionDbContext))]
-[Migration("202610200001_BaseCompetition")]
+[Migration("20261020140100_BaseCompetition")]
 public sealed class BaseCompetition : Migration
 {
     protected override void Up(MigrationBuilder migrationBuilder)

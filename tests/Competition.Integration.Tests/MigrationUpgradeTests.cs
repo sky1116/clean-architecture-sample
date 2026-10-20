@@ -29,10 +29,10 @@ public sealed class MigrationUpgradeTests : IAsyncLifetime
         var id = Guid.NewGuid();
         await using var context = Open();
         var migrator = context.GetService<IMigrator>();
-        await migrator.MigrateAsync("202610200001_BaseCompetition");
+        await migrator.MigrateAsync("20261020140100_BaseCompetition");
         var baseline = (await context.Database.GetAppliedMigrationsAsync()).ToArray();
         Assert.Single(baseline);
-        Assert.Equal("202610200001_BaseCompetition", baseline[0]);
+        Assert.Equal("20261020140100_BaseCompetition", baseline[0]);
 
         context.Competitions.Add(new CompetitionRow
         {
@@ -62,8 +62,8 @@ public sealed class MigrationUpgradeTests : IAsyncLifetime
         await context.Database.MigrateAsync();
         Assert.Equal(new[]
         {
-            "202610200001_BaseCompetition",
-            "202610200002_DurableOutbox"
+            "20261020140100_BaseCompetition",
+            "20261020140200_DurableOutbox"
         }, (await context.Database.GetAppliedMigrationsAsync()).OrderBy(x => x).ToArray());
         Assert.Empty(await context.PendingEvents.ToArrayAsync());
     }
