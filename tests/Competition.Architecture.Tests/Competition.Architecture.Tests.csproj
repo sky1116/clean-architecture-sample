@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><IsTestProject>true</IsTestProject><IsPackable>false</IsPackable></PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.14.1" />
+    <PackageReference Include="xunit" Version="2.9.3" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="3.1.4" />
+    <ProjectReference Include="../../src/Competition.Domain/Competition.Domain.csproj" />
+    <ProjectReference Include="../../src/Competition.Application/Competition.Application.csproj" />
+    <ProjectReference Include="../../src/Competition.Adapters/Competition.Adapters.csproj" />
+    <ProjectReference Include="../../src/Competition.Infrastructure/Competition.Infrastructure.csproj" />
+  </ItemGroup>
+</Project>
