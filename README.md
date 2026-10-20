@@ -191,3 +191,8 @@ Two checks serve different purposes: **Use Cases** reject clearly invalid submis
 
 These are application/Domain policies; PostgreSQL is an **outer implementation detail** used to atomically enforce them, not a second source of business rules.
 
+
+## Migration and transaction-cutoff verification (revision-specific)
+
+[GitHub Actions run 39386303105](https://github.com/sky1116/clean-architecture-sample/actions/runs/39386303105) passed **76 tests** at this revision: **22 real PostgreSQL integration tests** plus 54 unit/architecture/web/adapter tests, and the three-language documentation gate. The PostgreSQL tests include upgrading from the base migration without data loss, reapplying migrations, EF model-snapshot comparison, deadline checks inside transactions, repeated accepted requests after closure, and concurrent enrollment. These counts are evidence for this revision, not a guarantee for future changes.
+

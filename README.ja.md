@@ -195,3 +195,8 @@ python3 scripts/check_publication.py
 
 ルールを所有するのは **Domain**、トランザクションを実装するのは外側の **Infrastructure** です。
 
+
+## Migration とトランザクション締切検証（対象リビジョンのみ）
+
+[GitHub Actions 39386303105](https://github.com/sky1116/clean-architecture-sample/actions/runs/39386303105) では **76 件のテスト**（**実際の PostgreSQL を使う統合テスト 22 件**、単体・アーキテクチャ・HTTP・アダプターテスト 54 件）と三言語ドキュメント検証が成功しました。既存データを保持する Migration、再実行、Model Snapshot の差分、トランザクション内の締切、期限後の冪等な再送、同時登録を検証しています。件数はそのリビジョンの証拠であり、将来の変更に対する保証ではありません。
+

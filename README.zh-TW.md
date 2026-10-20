@@ -195,3 +195,8 @@ python3 scripts/check_publication.py
 
 **Domain 負責規則，Infrastructure 負責交易與持久化**，避免任何框架成為第二套業務規則來源。
 
+
+## Migration 與交易截止條件驗證（特定版本）
+
+[GitHub Actions 39386303105](https://github.com/sky1116/clean-architecture-sample/actions/runs/39386303105) 在此版本通過 **76 項測試**：其中 **22 項使用真正 PostgreSQL 容器的整合測試**，其餘 54 項為單元／架構／HTTP／Adapter 測試，三語文件檢查亦通過。案例涵蓋保存舊資料的 Schema 升級、重跑 Migration、Model Snapshot 漂移、交易內截止時間、截止後合法重送及並發報名。測試數字僅代表這次提交的實際執行證據，不代表未來版本自動通過。
+
