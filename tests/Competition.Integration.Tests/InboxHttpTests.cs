@@ -229,4 +229,80 @@ public sealed class InboxHttpTests : IAsyncLifetime
         Assert.Empty(await db.InboxReceipts.ToListAsync());
     }
 
+    [Fact]
+    public async Task Lost_sender_ack_after_receiver_commit_is_recovered_without_a_second_business_effect()
+    {
+        // Failure injection: the receiver has committed but the sender process
+        // crashes BEFORE its outbox acknowledgment. A new worker later reclaims.
+        var now = new DateTimeOffset(2027, 2, 1, 12, 0, 0, TimeSpan.Zero);
+        var eventId = Guid.NewGuid();
+        var competition = Guid.NewGuid();
+        var resultId = Guid.NewGuid();
+        var participant = Guid.NewGuid();
+        var eventBytes = Accepted(eventId, competition, resultId, participant, 62);
+        var options = new DbContextOptionsBuilder<CompetitionDbContext>()
+            .UseNpgsql(_connection).Options;
+        await using (var db = new CompetitionDbContext(options))
+        {
+            db.PendingEvents.Add(new OutboxRow
+            {
+                Id = eventId, CompetitionId = competition,
+                EventType = "competition.result.accepted.v1",
+                Payload = JsonSerializer.Serialize(new
+                {
+                    SchemaVersion = 1, CompetitionId = competition,
+                    ResultId = resultId, ParticipantId = participant, Points = 62
+                }),
+                OccurredAt = now, NextAttemptAt = now
+            });
+            await db.SaveChangesAsync();
+        }
+
+        await using var factory = new ApiFactory(_connection, true);
+        using var receiver = factory.CreateClient();
+        OutboxDelivery first;
+        await using (var db = new CompetitionDbContext(options))
+        {
+            first = Assert.Single(await new PostgresOutboxDeliveryStore(db).ClaimAsync(
+                1, now, TimeSpan.FromMinutes(2), CancellationToken.None));
+        }
+        using (var delivered = await SendAsync(receiver, eventBytes, eventId,
+                   "competition.result.accepted.v1"))
+            Assert.Equal(HttpStatusCode.Accepted, delivered.StatusCode);
+        // Intentionally OMIT first.MarkPublishedAsync. The first worker is gone.
+
+        OutboxDelivery second;
+        await using (var db = new CompetitionDbContext(options))
+        {
+            var store = new PostgresOutboxDeliveryStore(db);
+            Assert.Empty(await store.ClaimAsync(1, now.AddMinutes(1),
+                TimeSpan.FromMinutes(2), CancellationToken.None));
+            second = Assert.Single(await store.ClaimAsync(1, now.AddMinutes(3),
+                TimeSpan.FromMinutes(2), CancellationToken.None));
+        }
+        Assert.NotEqual(first.LeaseToken, second.LeaseToken);
+        using (var replay = await SendAsync(receiver, eventBytes, eventId,
+                   "competition.result.accepted.v1"))
+            Assert.Equal(HttpStatusCode.OK, replay.StatusCode);
+
+        await using (var db = new CompetitionDbContext(options))
+        {
+            var store = new PostgresOutboxDeliveryStore(db);
+            Assert.False(await store.MarkPublishedAsync(eventId, first.LeaseToken,
+                now.AddMinutes(3).AddSeconds(1), CancellationToken.None));
+            Assert.True(await store.MarkPublishedAsync(eventId, second.LeaseToken,
+                now.AddMinutes(3).AddSeconds(1), CancellationToken.None));
+        }
+        await using (var db = new CompetitionDbContext(options))
+        {
+            Assert.Equal(1, await db.InboxReceipts.CountAsync(x => x.EventId == eventId));
+            var projection = Assert.Single(await db.ReceivedResults.AsNoTracking()
+                .Where(x => x.ResultId == resultId).ToListAsync());
+            Assert.Equal(62, projection.EffectivePoints);
+            Assert.Equal(0, projection.Revision);
+            Assert.NotNull((await db.PendingEvents.AsNoTracking().SingleAsync(
+                x => x.Id == eventId)).PublishedAt);
+        }
+    }
+
 }
