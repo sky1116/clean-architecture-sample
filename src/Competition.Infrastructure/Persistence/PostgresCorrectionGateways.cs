@@ -29,10 +29,11 @@ public sealed class PostgresCorrectionGateway(CompetitionDbContext database) : I
             await transaction.RollbackAsync(cancellationToken);
             return new(CorrectionStatus.VersionConflict, latest);
         }
+        var approvedRevision = next.Value;
         database.Corrections.Add(new CorrectionRow
         {
             Id = Guid.NewGuid(), CompetitionId = competitionId, ResultId = resultId,
-            AdministratorId = administratorId, Revision = next,
+            AdministratorId = administratorId, Revision = approvedRevision,
             ReplacementPoints = correctedPoints, Reason = reason, OccurredAt = now
         });
         database.AuditEntries.Add(new AuditRow
@@ -41,12 +42,12 @@ public sealed class PostgresCorrectionGateway(CompetitionDbContext database) : I
             ResultId = resultId, Action = "ResultCorrected", OccurredAt = now
         });
         database.PendingEvents.Add(OutboxRecords.Corrected(competitionId, resultId,
-            next, correctedPoints, now));
+            approvedRevision, correctedPoints, now));
         try
         {
             await database.SaveChangesAsync(cancellationToken);
             await transaction.CommitAsync(cancellationToken);
-            return new(CorrectionStatus.Applied, next);
+            return new(CorrectionStatus.Applied, approvedRevision);
         }
         catch (DbUpdateException exception) when (PostgresCompetitionGateway.IsUnique(exception))
         {
