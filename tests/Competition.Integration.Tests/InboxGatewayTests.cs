@@ -124,6 +124,26 @@ public sealed class InboxGatewayTests : IAsyncLifetime
     }
 
     [Fact]
+    public async Task Repeated_parallel_same_event_deliveries_always_return_applied_then_duplicate()
+    {
+        // Repeated race probes use a fresh EventId each time. A single green
+        // scheduling order is insufficient evidence for concurrency semantics.
+        for (var iteration = 0; iteration < 8; iteration++)
+        {
+            var message = Accepted();
+            var outcomes = await Task.WhenAll(
+                Task.Run(() => ReceiveAsync(message)),
+                Task.Run(() => ReceiveAsync(message)));
+            Assert.Single(outcomes, x => x == InboxWriteStatus.Applied);
+            Assert.Single(outcomes, x => x == InboxWriteStatus.Duplicate);
+        }
+
+        await using var verify = Open();
+        Assert.Equal(8, await verify.InboxReceipts.CountAsync());
+        Assert.Equal(8, await verify.ReceivedResults.CountAsync());
+    }
+
+    [Fact]
     public async Task Two_independent_corrections_claiming_one_revision_do_not_both_succeed()
     {
         var accepted = Accepted();
