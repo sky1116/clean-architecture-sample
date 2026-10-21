@@ -34,6 +34,14 @@ public sealed class RegisterParticipantInteractor(ICompetitionGateway competitio
             output.Present(new("competition.not_found"));
             return;
         }
+        // A registration that is already durably accepted is read-only and does
+        // not become invalid simply because the enrollment window has since closed.
+        if (await enrollments.ExistsAsync(input.CompetitionId, input.AuthenticatedParticipantId,
+            cancellationToken))
+        {
+            output.Present(new("registration.already_registered"));
+            return;
+        }
         try { competition.RequireRegistrationOpen(clock.UtcNow); }
         catch (DomainRuleException ex) { output.Present(new(ex.Code)); return; }
         var status = await enrollments.RegisterAsync(input.CompetitionId, input.AuthenticatedParticipantId,
