@@ -243,3 +243,21 @@ API 與整合測試包含真實 JWT 授權、實際 HTTP、PostgreSQL 交易、�
 
 **驗證邊界：** 目前檢查專案 XML、編譯後 Assembly 依賴、Boundary 名稱與 DTO 結構；不能把這些測試說成已窮盡所有 MSBuild Import、反射動態載入、部署機密管理或書籍全文逐頁驗證，也不代表遊戲真實性、跨服務 Exactly-once 或資料庫 Commit 瞬間截止的保證。**PR 在獨立 Review 前仍維持 Draft；CI PASS 是特定版本的證據，不是無條件架構簽核。**
 
+
+## 定向安全與故障路徑稽核
+
+本節是**特定版本的防禦性程式稽核**，並不是正式滲透測試，也不代表取得生產環境安全認證。以下以程式、負向案例及 PostgreSQL 實際測試為依據，同時保留尚未驗證的風險。
+
+| 威脅／故障 | 防護措施與可執行驗證 | 尚未涵蓋的範圍 |
+| --- | --- | --- |
+| 不可信的身分提供者網址 | 啟動時拒絕非 HTTPS、內嵌帳密、帶查詢參數或 Fragment 的 OIDC Authority。負向測試也確認例外不會回顯設定內容。 | 正式 OIDC/JWKS、Issuer 管理與金鑰輪替，必須有真正的外部提供者及部署驗收。 |
+| Webhook 偽造、非 JSON 或過大請求 | 必須先驗證**實際 HTTP 位元組**的 HMAC，才解析 JSON；只接受真正的 `application/json`，檢查事件 Header／Body 一致性。8 KiB 限制也涵蓋未提供 Content-Length 的串流；被拒絕的請求不得寫入 Inbox。 | 正式反向代理、TLS 終端、流量攻擊壓測、共享金鑰輪替及獨立接收服務尚未驗證。 |
+| Outbox 資料損毀或未知事件類型 | 發送前拒絕無效 JSON、非物件、未知版本事件及超大 Envelope，分類為永久失敗，避免反覆向外傳輸；暫時網路失敗允許重試，取消 Token 不得誤認成功。 | 必須有營運告警與 Dead Letter 檢查，資料能存入 DB 不等於內容一定正確。 |
+| 同 EventId 被兩個 Worker 同時處理 | 使用 PostgreSQL **交易範圍 Advisory Lock** 先序列化事件辨識，再以同一交易寫入 Inbox 收據與獨立投影。反覆的雙 Worker 競爭測試必須呈現一個 Applied、一個 Duplicate。 | 64-bit 鎖鍵碰撞最多造成無關事件排隊，不可取代資料庫 Unique Constraint；不宣稱其他資料庫具備相同行為。 |
+| 接收端提交後、發送端尚未確認即故障 | 真正 HTTP＋PostgreSQL 案例刻意略過第一次 Outbox ACK，待租約過期由新 Token 接手並重送；確認只有**一筆業務投影**，舊 Token 無法補寫成功。 | 仍是 **At-least-once 投遞**；此測試模擬確認遺失的故障窗口，不等於真正跨機房斷線／程序強制終止測試。 |
+| 管理者誤重送已完成事件 | 既有管理者 API 具有權限、資料列鎖、狀態限制與持久化操作紀錄；PostgreSQL 測試涵蓋並發管理及已發布事件不可重送。 | 正式營運審批、雙人覆核、權限治理、獨立稽核儲存與告警尚未建立。 |
+
+**CA 職責歸屬：** 身分設定、HTTP／HMAC 驗證與網路傳輸留在外圈；Domain 負責競賽與更正版本業務規則；Use Case 透過自己擁有的 Port 作決策；PostgreSQL 只負責交易、鎖與持久化。這是 Dependency Rule 的應用，**不是宣稱書中規定某種驗證套件或 Exactly-once 技術**。
+
+**驗收限制：** 測試成功只能支持該版本、該條件下實際跑過的案例；不能推論不存在其他 Race Condition、已整合正式 OIDC、具備完整反作弊或可以直接上線。PR 在獨立人工安全與架構 Review 前保持 Draft。
+
