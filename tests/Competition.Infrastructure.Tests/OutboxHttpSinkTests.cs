@@ -121,8 +121,11 @@ public sealed class OutboxHttpSinkTests
         using var client = new HttpClient(handler);
         var sender = new HttpOutboxEventSink(client,
             new Uri("https://event-receiver.example/events"), SigningKey);
-        var eventData = Delivery() with { Payload = "{\\"Data\\":\\"" +
-            new string('x', 8192) + "\\"}" };
+        var eventData = Delivery() with
+        {
+            Payload = System.Text.Json.JsonSerializer.Serialize(
+                new { Data = new string('x', 8192) })
+        };
         Assert.Equal(DeliveryResult.PermanentFailure,
             await sender.SendAsync(eventData, CancellationToken.None));
         Assert.Equal(0, handler.Calls);
