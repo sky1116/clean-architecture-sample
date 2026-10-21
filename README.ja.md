@@ -1,0 +1,272 @@
+# 競技プラットフォーム — Clean Architecture 実践サンプル
+
+[English](README.md) · [繁體中文](README.zh-TW.md) · [日本語](README.ja.md)
+
+> Robert C. Martin 著『Clean Architecture』の原則に基づき、公開教育用に一から実装する大会管理・ランキング・個人履歴のサンプルです。**本番運用可能な不正対策システムであるとは主張しません。**
+
+## 教育用サンプルの最終受け入れ基準
+
+**サンプル範囲を固定しました。** これは実行・検証できる **Clean Architecture の教育用参照**であり、本番システムではありません。完了条件はソース依存性と Boundary、Domain／Use Case、HTTP と実際の PostgreSQL、禁止識別子の負の対照、三言語 README、オリジナル図二点です。将来の外部システム統合を、この教材 PR の無期限の前提条件にはしません。
+
+**マージ判断：** この PR の最新 Commit に対する CI が成功し、未解決のコードレビュー阻害事項がなければ、リポジトリ所有者の判断でマージできます。これは本番配備の許可や完全なセキュリティ認証ではありません。実際の外部 OIDC、別デプロイの Webhook 受信サービス、秘密鍵管理、完全な不正対策判定は範囲外です。
+
+**ライセンス：** このオリジナルサンプルは [MIT License](LICENSE)（Copyright © 2026 sky1116）で公開しています。著作権表示と許諾表示を保持するなど、ライセンス条件のもとで学習・利用・改変・再配布できます。サードパーティーの依存ライブラリにはそれぞれのライセンスが適用されます。
+
+
+## 目的
+
+認証された参加者が大会に登録し、検証可能な証拠を伴う結果を提出します。システムは判定履歴を保持し、決定的な順位を計算して個人履歴を公開します。無効な入力、不正操作、権限逸脱、再送、競合、期限切れ、外部サービス障害を最初から扱います。
+
+**最優先原則：ソースコードの依存関係は内側だけを向く。** ビジネスルールは HTTP、データベース、フレームワーク、Logger に依存しません。オブジェクトの組み立ては最外層の Composition Root が担当します。
+
+## 基本となる二つの図
+
+### 1. 同心円と依存性ルール
+
+![独自に描いた Clean Architecture 四層図：依存関係は内側に向かう](docs/assets/architecture-rings.svg)
+
+- **Entities（企業全体のビジネスルール）**：技術に依存しない競技ルールと不変条件。
+- **Use Cases（アプリケーションのビジネスルール）**：登録、結果検証、ランキング、履歴。
+- **Interface Adapters（インターフェースアダプター）**：Controller、Presenter、Gateway 実装、View Model。
+- **Frameworks & Drivers（フレームワークとドライバー）**：ASP.NET Core、EF Core、PostgreSQL、Telemetry。
+
+図中の矢印は**ソースコードの依存関係**を示し、実行時の制御フローと同じ意味ではありません。
+
+### 2. 典型的なリクエスト／レスポンス
+
+![Controller、Input Boundary、Interactor、Output Boundary、Presenter、Gateway の独自設計フロー図](docs/assets/request-boundaries.svg)
+
+1. **Controller** は HTTP データを単純な **Input Data** に変換し、**Input Boundary** を呼び出します。
+2. **Use Case Interactor** はアプリケーションの規則を実行し、必要に応じて **Entities** を利用します。
+3. Interactor は内側で定義された **Gateway interface** に依存します。PostgreSQL Adapter が外側で実装します。
+4. Interactor は **Output Data** を **Output Boundary** に渡します。外側の **Presenter** が実装します。
+5. Presenter は **View Model** を生成します。Web Host が HTTP 応答を作成し、Use Case は HTTP と EF Core を知りません。
+
+**依存性逆転**により、実行時にはインターフェースを通じて外側の実装を呼び出しても、ソースコードの依存方向は内側に保たれます。
+
+## プロジェクト構成
+
+| 層 | プロジェクト | 責務 |
+| --- | --- | --- |
+| Entities | `Competition.Domain` | 業務ルールと不変条件、フレームワーク非依存 |
+| Use Cases | `Competition.Application` | Interactor、Input/Output Boundary、Data、Port |
+| Interface Adapters | `Competition.Adapters` | Presenter と View Model |
+| Frameworks & Drivers | `Competition.Infrastructure`、`Competition.Web` | PostgreSQL、EF Core、ASP.NET Core、ログとテレメトリ |
+| Tests | `Competition.*.Tests` | 正常／異常／権限／依存性の実証 |
+
+Repository の**インターフェース**は必要とする内側の層で定義し、EF Core による**実装**は外側に置きます。Domain は `ILogger` や HTTP DTO に依存しません。
+
+## ユースケースと防御
+
+| Use Case | 規則 | 異常・不正対策 |
+| --- | --- | --- |
+| Create Competition | 開催期間と採点方針 | 不正な期間、識別子の重複 |
+| Register Participant | 本人と参加資格 | 権限不足、締切、重複登録 |
+| Submit Result | 信頼できる証拠の検証 | 虚偽スコア、リプレイ、冪等キー競合 |
+| Get Leaderboard | 決定的な順位と同点処理 | ページ制限、暫定／確定順位 |
+| Get Personal History | 不変の判定履歴 | 権限、訂正履歴、競合 |
+| Correct Result | 権限のある訂正と監査 | バージョン競合、理由の欠落、トランザクション |
+
+**クライアントから送られたスコアを信頼してはいけません。** 認証は送信者の識別であり、実際の競技結果の証明ではありません。信頼できる権威による証拠か、サーバー側で独立検証可能なルールが必要です。署名鍵をプレイヤーへ配布しません。
+
+**ログと監査記録は別物です。** 構造化ログと Trace は運用調査用、ビジネス監査は判定履歴用です。秘密情報や無制限のユーザー入力をログへ出力しません。
+
+## テストと品質ゲート
+
+- Domain：境界値、状態遷移、攻撃的な入力、同点処理。
+- Interactor：厳密な Port Fake による認可、冪等性、Output Boundary の検証。
+- Architecture：不正な依存関係を**失敗として検出**するテスト。
+- PostgreSQL integration：本物の Testcontainers による一意制約、トランザクション、競合の検証。InMemory で代用しません。
+- HTTP：認証付き操作とエラー応答。
+- Negative control：意図的な不具合を検出できることの証明。
+- 公開前スキャン：公開識別子の制限には組み込みハッシュ指紋と任意の CI Secret の追加リストを使用します。合成文字列による負の対照テストで実際の検証器が違反を検出できることも確認します。
+
+CI の成功を確認するまでは、**全テスト PASS と主張しません**。
+
+## 開発環境
+
+.NET 10 SDK が必要です。PostgreSQL の統合テストには Docker を使います。Solution の追加は不要です。下記の `.csproj` 単位のコマンドを CI と同様に実行します。接続文字列や認証情報は環境変数で供給し、コミットしません。
+
+## 書籍との対応表
+
+| 原則の参照先 | 実装上の対応 |
+| --- | --- |
+| Ch. 20 Business Rules | Domain と不変条件 |
+| Ch. 22 The Clean Architecture | 内向き依存、Input/Output Boundary、Presenter、Gateway |
+| Ch. 23 Presenters and Humble Objects | Presenter が View Model を形成 |
+| Ch. 26 The Main Component | Web Host が構成を組み立てる |
+| Ch. 28 The Test Boundary | 境界ごとの独立した検証 |
+| Ch. 30–32 | DB・Web・Framework は外側の詳細 |
+
+**参照元：** Robert C. Martin『Clean Architecture: A Craftsman's Guide to Software Structure and Design』（Pearson、2017年）、[著者の原文記事](https://blog.cleancoder.com/uncle-bob/2012/08/13/the-clean-architecture.html)。二つの SVG は概念を説明するため**独自に作成した図**であり、出版物の画像の転載ではありません。技術選定、不正対策、Outbox、Telemetry は本サンプルの設計判断であり、書籍が具体的な製品を指定したものではありません。
+
+## 非目標
+
+明確な境界を持つモジュラーモノリスを扱います。信頼できる証拠がない限りスコアの真実性を保証できず、メッセージ配送の Exactly Once も保証しません。実装とテストで確認できる事実を優先します。
+
+## 実装済みの HTTP 契約
+
+| ルート | 認証／認可 | 実装された動作 |
+| --- | --- | --- |
+| `POST /api/competitions` | OIDC + competition-admin ロール | 開催期間・得点上限を持つ大会を作成 |
+| `POST /api/competitions/{id}/participants` | OIDC | 検証済みの本人として参加登録 |
+| `POST /api/competitions/{id}/results` | OIDC + レート制限 | `Idempotency-Key` と `OpaqueEvidence` が必要 |
+| `POST /api/competitions/{id}/results/{resultId}/corrections` | competition-admin ロール | バージョン検証付きの監査可能な訂正 |
+| `GET /api/competitions/{id}/leaderboard` | 公開 | 訂正を反映した有効得点から順位を算出 |
+| `GET /api/competitions/{id}/me/history` | OIDC | 本人の原本と訂正履歴のみ表示 |
+| `GET /health` | 公開 | プロセスの生存のみ確認。**DB の正常性を保証しません** |
+
+### 記録の信頼性と整合性
+
+**信頼できる証明書（receipt）の Adapter** は HMAC 署名を検証し、大会、参加者、得点、証明 ID、発行／有効期限を紐付けます。署名秘密鍵は**独立した信頼できる判定サーバーのみ**が保持し、プレイヤー・ブラウザー・モバイルアプリに渡してはいけません。署名が証明するのは発行元であり、**ゲーム内の不正行為がなかったこと自体ではありません**。本サンプルにゲームの判定サーバーや証拠の発行機能は含まれません。
+
+冪等キーは要求の証拠と結び付きます。PostgreSQL Adapter は承認された結果、冪等処理の記録、業務監査履歴、配信待ちのバージョン付き Outbox イベントを**同じトランザクション**で保存します。記録済みでも**外部への配信完了は意味しません**。一意制約で再送と並行実行を防御します。訂正は原本を上書きせず、版数と監査イベントを追加します。ランキングには最新版を反映し、個人履歴にはすべての版を残します。
+
+権限のない要求、不正な証拠、同じキーで異なる内容、古い訂正版数は成功扱いにしません。実際の PostgreSQL Docker コンテナーで統合テストを実施します。
+
+### ログ・トレース・業務監査
+
+- **運用ログ**：HTTP の結果、処理時間、Trace 相関、安定した結果コードのみ。証拠原文、JWT、署名鍵を出力しません。
+- **Tracing / Metrics**：OpenTelemetry は Web Driver のみで構成し、外部送信は**既定で無効**。`Telemetry__ExportOtlp=true` と Collector の設定で有効化します。
+- **業務監査**：結果承認と訂正の履歴は PostgreSQL にトランザクションとともに保存します。運用ログは監査記録の代わりにはなりません。
+- **CA 境界**：Entities と Interactors は `ILogger` や OpenTelemetry に依存しません。
+
+## ローカルで実行する
+
+.NET 10 SDK、Docker、**外部の OIDC ID プロバイダー**が必要です。初期管理者、リポジトリに保存された署名鍵、認証を回避する仕組みは用意しません。
+
+1. 安全な `POSTGRES_PASSWORD` をローカルで設定します。追跡されない `.env` は `.env.example` から作成できます。
+2. `docker compose up -d postgres` を実行します。
+3. 次の値を**環境変数**として設定します。
+
+   - `ConnectionStrings__Competitions`：ローカル PostgreSQL への接続文字列
+   - `Authentication__Authority`：HTTPS の OIDC Issuer URL
+   - `Authentication__Audience`：検証対象の API Audience
+   - `TrustedAuthority__SigningKeyBase64`：最低 32 バイトのランダムな秘密情報を Base64 化したもの。**信頼された判定端末以外と共有しません**
+   - `Database__BootstrapOnStart=true`：**Development 専用**。空、または Migration 管理下の DB にチェックイン済みの四つの EF Core Migration を適用します。本番環境では自動実行しません
+
+4. `dotnet run --project src/Competition.Web/Competition.Web.csproj --environment Development` を実行します。
+5. `GET /health` でプロセスの生存を確認します。保護対象 API は検証済み Access Token が必要です。
+
+`OpaqueEvidence` は信頼された判定元が発行した署名付き証明でなければなりません。クライアント側で任意の JSON を作っても承認されません。トークン、鍵、パスワードや私的なホスト名を Git やログに含めないでください。
+
+## 全検証コマンド
+
+```bash
+dotnet test tests/Competition.Domain.Tests/Competition.Domain.Tests.csproj -c Release
+dotnet test tests/Competition.Application.Tests/Competition.Application.Tests.csproj -c Release
+dotnet test tests/Competition.Adapters.Tests/Competition.Adapters.Tests.csproj -c Release
+dotnet test tests/Competition.Infrastructure.Tests/Competition.Infrastructure.Tests.csproj -c Release
+dotnet test tests/Competition.Web.Tests/Competition.Web.Tests.csproj -c Release
+dotnet test tests/Competition.Architecture.Tests/Competition.Architecture.Tests.csproj -c Release
+dotnet test tests/Competition.Integration.Tests/Competition.Integration.Tests.csproj -c Release
+python3 scripts/check_publication.py
+```
+
+統合テストは実際の一時 PostgreSQL コンテナーを使用し、トランザクション、並行登録、再送、一意制約、訂正競合、情報の分離を確認します。CI では単体／アーキテクチャテストと DB 統合テストを別ジョブに分けています。
+
+## 明示的な限界と今後の課題
+
+このプロジェクトは**教育用モジュラーモノリス**であり、本番稼働が完成しているわけではありません。OIDC 提供者、信頼されたゲーム判定／発行サービス、完全な不正検知、確定時点のランキング Snapshot、独立してデプロイした本番向け Webhook 受信サービス、Exactly-once 処理、本番向け運用者ダッシュボード、分散システム間の配送保証は含まれません。登録と結果の書き込みは現在 PostgreSQL トランザクション内で Domain のルールを再検証しています。ただし判定は信頼できる UTC Clock の読み取り時点であり、DB Commit 時点ではありません。厳密なコミット時刻による締切や他の書き込み主体による期間変更には追加設計が必要です。テスト結果は成功した CI の実行記録に基づいてのみ主張できます。緑の CI は完全な安全性や書籍への完全な適合証明ではありません。**書籍の依存性ルール**と**本サンプル独自の実務的な選択**を明確に区別しています。
+
+## オプトイン Outbox 配信と保証範囲
+
+最外層 Web Driver に**任意で有効化できる HTTPS Webhook Dispatcher**を追加しました。配信状態は PostgreSQL に保存されます。
+
+- `Outbox__Enabled=true` と `Outbox__WebhookUrl=https://your-trusted-receiver.example/events` を指定した場合のみ外部へ送信します。既定では送信しません。
+- PostgreSQL の `FOR UPDATE SKIP LOCKED`、期限付き Lease、ランダムな Lease Token を利用し、複数 Worker による同一イベントの同時獲得を避けます。
+- バージョン付き JSON Envelope、安定した `EventId`、`EventType`、`Idempotency-Key` Header を送信します。**受信側は EventId の重複を永続的に排除する必要があります**。
+- HTTP 2xx のみ配信成功として記録します。408、429、5xx とネットワーク障害はリトライ、それ以外の 4xx は恒久的失敗と扱います。
+- 一時的障害では上限付きの指数バックオフを利用し、五回の失敗で **Dead Letter** へ移動し、運用担当者の調査を待ちます。
+- 受信先の処理後、確認保存前に送信側が停止した場合は Lease 期限後に**再配信される可能性があります**。これは **At-least-once の試行**であり、Exactly-once ではありません。
+- リダイレクトを追わず、管理者が設定した HTTPS 宛先だけを利用します。秘密情報や HTTP 応答本文はログへ出力しません。
+
+**バージョン付き Migration：** `BaseCompetition`、`DurableOutbox`、`InboxProjection`、`OperatorRedriveAudit` の EF Core Migration をチェックインしています。統合テストで新規構築、既存データを保持した更新、再実行、Model Snapshot の差分を検証します。Development 限定の `Database__BootstrapOnStart=true` は現在 `EnsureCreated` ではなく `MigrateAsync` を呼びます。以前 `EnsureCreated` で作成した DB には Migration History がないため、バックアップと慎重な基準移行が必要です。貴重なデータを削除したり、無条件で更新したりしてはいけません。本番環境では Web 起動時ではなく独立したレビュー済みの Migration 手順を用いてください。
+
+実際の PostgreSQL による Lease 競合、期限切れ回復、無効 Token の拒否、リトライ／Dead Letter、HTTP Handler の応答分類をテストしています。ただし**独立デプロイの本番外部受信サービスへの送信テスト、および監視・承認を備えた本番運用画面は未実装**です。
+
+
+## 検証済みのフルスタック HTTP シナリオ
+
+`AuthorizedHttpJourneyTests` は**実際の ASP.NET Core HTTP パイプラインと PostgreSQL Testcontainers**を使用します。テスト専用の正しく署名された JWT と信頼済み HMAC 証明によって、大会作成、参加登録、結果提出、同じ冪等キーでの再送、ランキング、個人履歴、管理者による訂正、監査および Outbox の永続化を一連の API 呼び出しで検証します。
+
+これは**ローカルテスト専用の発行者**であり、外部 OIDC サービスまたは実際のゲーム判定サーバーの検証ではありません。実行証拠：[GitHub Actions 39380576833](https://github.com/sky1116/clean-architecture-sample/actions/runs/39380576833)。そのリビジョンでは**67 件のテスト（PostgreSQL 統合テスト 13 件）**とドキュメント検証が成功しました。件数は今後の変更で増減します。
+
+
+## 書き込みトランザクション内の締切と資格チェック
+
+**Use Case** は無効な要求を早期に拒否します。**PostgreSQL Gateway** は永続化時にトランザクション内で大会期間と参加情報を再取得し、**同じ Domain Entity のルール**を呼び出します。時刻や得点のビジネス式をインフラ層に再実装しません。
+
+- 期限後でも、過去に受理された同一リクエストや参加登録は冪等に読み戻せます。新規レコードは作りません。
+- `StartsAt` を過ぎた新規登録、有効期間外の新規結果、未登録者による提出は、同じトランザクションで拒否されます。結果、Receipt、監査、Outbox は追加しません。
+- 判定時刻はトランザクション中の信頼できる `IUtcClock` に基づきます。**HTTP 到着時刻でも DB Commit 時刻でもありません**。この教材では大会期間と登録を作成後不変として扱います。
+- 実際の PostgreSQL 統合テストで期限切れ、重送、登録なし、同時登録のケースを検証します。
+
+ルールを所有するのは **Domain**、トランザクションを実装するのは外側の **Infrastructure** です。
+
+
+## Migration とトランザクション締切検証（対象リビジョンのみ）
+
+[GitHub Actions 39386303105](https://github.com/sky1116/clean-architecture-sample/actions/runs/39386303105) では **76 件のテスト**（**実際の PostgreSQL を使う統合テスト 22 件**、単体・アーキテクチャ・HTTP・アダプターテスト 54 件）と三言語ドキュメント検証が成功しました。既存データを保持する Migration、再実行、Model Snapshot の差分、トランザクション内の締切、期限後の冪等な再送、同時登録を検証しています。件数はそのリビジョンの証拠であり、将来の変更に対する保証ではありません。
+
+
+## Webhook 受信側と永続 Inbox の実装例
+
+サンプルの受信エンドポイント `POST /api/integrations/result-events` を追加しました。**既定では無効**です。信頼されたサーバー間通信に限定し、`Inbox__Enabled=true` と 32 バイト以上のランダムな `Inbox__WebhookSigningKeyBase64` を設定します。送信側の `Outbox__WebhookSigningKeyBase64` に**同じ信頼済み共有鍵**を指定し、管理者が指定した HTTPS の `Outbox__WebhookUrl` を使用します。秘密鍵を Git やプレイヤーのクライアントに置いてはいけません。
+
+送信側は**実際に送る JSON バイト列**を HMAC-SHA256 で署名し、受信側は JSON を処理する**前に** `X-Webhook-Signature: v1=...` を検証します。`X-Event-Id`、`X-Event-Type`、SchemaVersion、ID、8 KiB サイズ上限も確認します。この受信端はモジュラーモノリスの教材用インテグレーションであり、**独立デプロイ済みの本番受信サービスではありません**。
+
+内側の `ReceiveResultEventInteractor` は `IResultInboxPort` に依存し、外側の PostgreSQL Adapter が **Inbox の受信記録と独立した `ReceivedResults` 射影を同じトランザクション**で保存します。Webhooks は元の `Results` テーブルや公開ランキングを変更しません。同じ EventId と同じ本文は重複扱い、同じ ID に異なる本文は競合、原本より先に到達した訂正は HTTP 503 を返して再送を待ちます。訂正は版数順に処理されるため、依存イベントが届かないと送信側で Dead Letter に至る場合があります。
+
+実際の HTTP/PostgreSQL テストでは署名、改ざん、重複、異なる本文、順序逆転、無効化、サイズ制限を確認します。DB テストは複数受信者・再起動後再送・一意制約・整合性を検証します。これは **Exactly-once の配送保証でも外部本番ネットワークの検証でもありません**。
+
+[Inbox HTTP/PostgreSQL の成功 CI：94 件](https://github.com/sky1116/clean-architecture-sample/actions/runs/39390851699)。PostgreSQL 統合 34 件、その他 60 件と文書検証が成功。件数は対象リビジョンのみの証拠です。
+
+
+## 権限制御された Dead Letter 再送と監査
+
+`Outbox__RecoveryEnabled=true` を明示的に設定すると（既定では無効）、検証済み JWT の `competition-admin` ロールを持つ運用者だけが `POST /api/operations/outbox/{eventId}/redrive` を呼び出せます。JSON `Reason` は 8–300 文字が必要です。再送許可とバックグラウンド Dispatcher の有効化は別々の設定です。
+
+内側の **Application Interactor** が権限と理由を確認し、Application Port を使います。外側の **PostgreSQL Adapter** は対象行をロックし、配信済み／Lease 中／Dead Letter 以外のイベントを拒否します。適切な一件を同じトランザクションで再キューに入れ、運用者の識別子、理由、以前の試行回数、時刻を `OutboxRecoveryAudit` に残します。複数運用者による同時再送でも一件しか成功しません。**署名検証を回避する仕組みではなく、外部配送の成功も保証しません。**
+
+Inbox の訂正リビジョン規則はフレームワーク非依存の **Domain `ReceivedResultPolicy`** に移動しました。Infrastructure は現在の射影を読み取り、Domain に次の状態を問い合わせ、Inbox receipt と共に原子的に保存します。
+
+実際の JWT/HTTP/PostgreSQL テストで認可拒否、一回だけの再送、配信済みイベントの保護、監査記録を確認しています。本番運用ダッシュボード、承認ワークフロー、鍵のローテーション、独立デプロイの検証は含みません。
+
+
+## アーキテクチャ監査チェックポイント：書籍の原則と実際の検証
+
+これは**ソースコードとテストの監査チェックポイント**であり、書籍全文・本番デプロイ・将来の全変更を完全認証したという主張ではありません。章番号は設計意図との対応であり、書籍の原文引用や特定ライブラリの採用義務ではありません。
+
+| Clean Architecture の考え方 | 対応コード | 実際に検証すること |
+| --- | --- | --- |
+| Dependency Rule（第 22 章） | `Competition.Domain`、`Application`、`Adapters`、`Infrastructure`、`Web` | `ProjectGraphPolicy` が許可された参照グラフ全体と未知のプロジェクトを検証します。実際にプロジェクト参照／内側層のパッケージを改変した**負の対照**を同じ検証器に与え、さらにコンパイル済み内側 Assembly の参照を検査します。 |
+| Entities／ビジネス規則（第 20 章） | `Competition`、`RankingPolicy`、`ReceivedResultPolicy`、`CorrectionRevisionPolicy` | Domain は Web・DB に依存せず、期間、得点、ランキングと訂正リビジョンを Domain テストで確認します。PostgreSQL 側に別の業務バージョンルールを作りません。 |
+| Use Cases／依存性逆転（第 22 章） | `UseCases/*`、`Ports/*` | Interactor は Application が所有するインターフェイスと Domain に依存します。Input／Output Boundary を自動検出し、新規契約が検証から漏れないようにします。 |
+| Controller → Input Boundary（第 22 章） | `CompetitionController`、`Program.cs` | Controller は具象 Interactor ではなく入力インターフェイスを呼び、HTTP／JWT は外側で変換します。 |
+| Output Boundary → Presenter → View Model（第 23 章） | `RestPresenter`、`ApiViewModel` | 入出力 DTO が Domain Entity や EF Row を公開しないこと、および外側の Presenter が出力インターフェイスを実装することを検証します。 |
+| Database／Framework は詳細（第 30–32 章） | `Postgres*Gateway`、`CompetitionDbContext`、`Migrations/*` | EF Core と Npgsql は外側の Infrastructure に保持します。実際の PostgreSQL テストで原子性、競合、Inbox／Outbox と Migration を検証します。 |
+| Main Component／Test Boundary（第 26・28 章） | `Program.cs`、テスト群と CI | 外側の Web が依存オブジェクトを組み立て、Domain／Use Case／アーキテクチャ／HTTP／DB を分離して検証します。 |
+
+**監査で発見し修正した動作の差異：** 既に承認済みの結果や参加登録は、現在の締切判定より前に冪等検索すべきです。同じ証拠・同じ要求キーの承認済み結果は証明期限が切れた後も読み戻せますが、新規の期限切れ提出や同じキーに異なる本文を付けた要求は拒否されます。新規書き込みでは PostgreSQL トランザクション内で Domain の期間・参加資格を再確認します。Use Case と実際の HTTP テストでこの区別を検証します。
+
+**証拠の限界：** プロジェクト XML、コンパイル済み Assembly、Boundary 名称、DTO の形状を検査しています。ただし、あらゆる MSBuild Import、動的ロード、運用上の秘密管理、書籍全文との逐語的整合性まで証明するものではありません。また、ゲームの実成績、分散 Exactly-once、DB Commit 時刻による厳密な締切を保証しません。**教育用の完成基準を満たせば GitHub の通常レビューへ進めます。マージは所有者の判断であり、CI PASS を本番認証とはみなしません。**
+
+
+## セキュリティと障害経路の限定監査
+
+これは**特定リビジョンの防御的レビュー**であり、本番向け侵入テストやセキュリティ認証ではありません。実際のコード、否定ケース、PostgreSQL 統合テストを根拠とし、未検証の限界を明記します。
+
+| 脅威／障害 | 防御と検証 | 残る範囲 |
+| --- | --- | --- |
+| 信頼できない OIDC 発行者 URL | 起動時に HTTP、URL 埋込認証情報、クエリ／フラグメントを含む Authority を拒否します。負のテストでは設定値をエラーメッセージに出しません。 | 実際の OIDC/JWKS、発行者管理、鍵ローテーションには外部プロバイダーとデプロイ検証が必要です。 |
+| Webhook 偽装、偽 JSON、大容量リクエスト | **送信された正確なバイト列**の HMAC を JSON 解析前に検証し、`application/json` だけを受け付けます。Header と本文の ID/type を照合します。Content-Length がないストリームも 8 KiB に制限し、拒否後は Inbox を更新しません。 | 実際のリバースプロキシ、TLS 終端、高負荷攻撃、共有鍵のローテーションは対象外です。 |
+| 破損した Outbox イベント | 無効／非オブジェクト JSON、未知のイベント型、サイズ超過をネットワーク送信前に恒久的失敗として扱います。通信障害のみ再試行し、呼び出し元のキャンセルを成功と誤認しません。 | Dead Letter の運用監視とアラートは別途必要です。 |
+| 同一 EventId の同時受信 | PostgreSQL の**トランザクション単位 Advisory Lock**を最初の受信記録の取得前に使い、Inbox receipt と射影を一緒にコミットします。二つの Worker の競合を繰り返し検証し、一件だけ Applied、もう一件は Duplicate を期待します。 | 64-bit 鍵の衝突は処理を直列化しますが Unique Constraint の代わりではありません。他の DB と同等とは主張しません。 |
+| 受信後に送信側 ACK が失われる | 実際の HTTP／PostgreSQL ケースで一回目の ACK を意図的に省略し、Lease 期限後に新 Token で受け継ぎ、同じ署名イベントを再送します。射影効果は**一回だけ**で、古い Token は承認できません。 | **At-least-once 配信**のままであり、実プロセス停止やネットワーク切断の代用試験です。 |
+| 管理者が配信済みイベントを再送する | 既存の管理者専用 API は権限、行ロック、状態検査と永続監査を使用し、同時再送と配信済みイベントを拒否する DB テストがあります。 | 本番承認、二重承認、権限管理、独立監査基盤とアラートは未実装です。 |
+
+**Clean Architecture 上の役割：** OIDC 設定、HTTP/HMAC、通信は外側の Adapter／Driver に置きます。Domain は競技と訂正の規則、Use Case はアプリケーション判断と Port、PostgreSQL はトランザクションとロックを担当します。これは Dependency Rule の適用であり、書籍が特定製品や Exactly-once を要求するという意味ではありません。
+
+**証拠の限界：** CI 成功は対象リビジョンの検証済みケースを示すだけで、全競合、外部 OIDC、完全な不正防止や本番配備を保証しません。教育用 PR は通常のコードレビューへ進められます。本番環境の独立したセキュリティレビューは今回の配布範囲外です。
+

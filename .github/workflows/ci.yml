@@ -1,0 +1,55 @@
+name: Build and verify
+on:
+  push:
+    branches: [main, feat/competition-platform]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-and-architecture:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Unit, adapter, API and architecture tests
+        run: |
+          dotnet test tests/Competition.Domain.Tests/Competition.Domain.Tests.csproj --configuration Release
+          dotnet test tests/Competition.Application.Tests/Competition.Application.Tests.csproj --configuration Release
+          dotnet test tests/Competition.Adapters.Tests/Competition.Adapters.Tests.csproj --configuration Release
+          dotnet test tests/Competition.Infrastructure.Tests/Competition.Infrastructure.Tests.csproj --configuration Release
+          dotnet test tests/Competition.Web.Tests/Competition.Web.Tests.csproj --configuration Release
+          dotnet test tests/Competition.Architecture.Tests/Competition.Architecture.Tests.csproj --configuration Release
+      - name: Publication hygiene
+        env:
+          PUBLICATION_RESTRICTED_TERMS: ${{ secrets.PUBLICATION_RESTRICTED_TERMS }}
+        run: |
+          python3 scripts/check_publication.py
+          python3 scripts/check_publication.py --self-test
+
+  postgres-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - name: Transaction, uniqueness and replay tests against PostgreSQL
+        run: dotnet test tests/Competition.Integration.Tests/Competition.Integration.Tests.csproj --configuration Release
+
+  documentation:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate three language entry points and diagrams
+        run: |
+          python3 scripts/check_docs.py
+          python3 scripts/check_docs.py --self-test
+      - name: Validate local database Compose syntax
+        env:
+          POSTGRES_PASSWORD: docs-only-placeholder
+        run: docker compose config --quiet

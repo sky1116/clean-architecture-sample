@@ -1,0 +1,1 @@
+<Project Sdk="Microsoft.NET.Sdk"><ItemGroup><ProjectReference Include="../Competition.Domain/Competition.Domain.csproj" /></ItemGroup></Project>
