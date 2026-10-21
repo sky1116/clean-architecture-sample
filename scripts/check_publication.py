@@ -19,9 +19,11 @@ FINGERPRINTS = {
     13: ("9d39df9a978b88c24d3f85d232548bac043b2ae21809a3f2a1baa27834815ad4",),
 }
 
-def matches_restricted_token(haystack: str) -> bool:
+def matches_restricted_token(haystack: str, fingerprints=None) -> bool:
+    # Injectable fingerprint groups let a harmless synthetic term prove the
+    # exact verifier used by the publication gate is sensitive to violations.
     lower = haystack.casefold()
-    for length, digests in FINGERPRINTS.items():
+    for length, digests in (FINGERPRINTS if fingerprints is None else fingerprints).items():
         targets = set(digests)
         for offset in range(len(lower) - length + 1):
             segment = lower[offset:offset + length]
@@ -32,6 +34,16 @@ def matches_restricted_token(haystack: str) -> bool:
     return False
 
 def main() -> int:
+    if "--self-test" in sys.argv:
+        sample = "syntheticpublicationmarker"
+        synthetic = {len(sample): (hashlib.sha256(sample.encode("utf-8")).hexdigest(),)}
+        assert matches_restricted_token("prefix " + sample + " suffix", synthetic)
+        assert matches_restricted_token(sample.upper(), synthetic)
+        assert not matches_restricted_token("unrelated generic source text", synthetic)
+        assert not matches_restricted_token(sample[:-1], synthetic)
+        print("Publication checker negative controls passed.")
+        return 0
+
     entries = subprocess.check_output(["git", "ls-files"], cwd=ROOT, text=True).splitlines()
     errors = []
     private_terms = [term.strip().casefold() for term in
