@@ -220,6 +220,10 @@ public sealed class InboxHttpTests : IAsyncLifetime
         request.Content.Headers.ContentType =
             new MediaTypeHeaderValue("application/json");
         request.Headers.TransferEncodingChunked = true;
+        // The body-limit path must be exercised, not short-circuited by the
+        // missing-signature guard.
+        request.Headers.TryAddWithoutValidation("X-Webhook-Signature",
+            WebhookSignature.Create(new byte[] { 1, 2, 3 }, Key));
         using var response = await client.SendAsync(request);
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
 

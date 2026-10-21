@@ -1,8 +1,10 @@
+using System.Buffers.Binary;
 using Competition.Application.Ports;
 using Competition.Application.UseCases;
 using Competition.Infrastructure.Persistence;
 using Competition.Domain.Results;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Storage;
 
 namespace Competition.Infrastructure.Delivery;
 
@@ -18,6 +20,22 @@ public sealed class PostgresResultInboxGateway(CompetitionDbContext database, IU
         CancellationToken cancellationToken)
     {
         await using var transaction = await database.Database.BeginTransactionAsync(cancellationToken);
+        // A receipt row does not exist for the FIRST delivery. A regular row lock
+        // therefore cannot serialize two receivers racing on the same EventId.
+        // The transaction-scoped advisory lock closes that race before lookup.
+        // Hash collisions only serialize unrelated events, never alter outcomes.
+        var eventKey = BinaryPrimitives.ReadInt64LittleEndian(input.EventId.ToByteArray());
+        await using (var command = database.Database.GetDbConnection().CreateCommand())
+        {
+            command.Transaction = database.Database.CurrentTransaction!.GetDbTransaction();
+            command.CommandText = "SELECT pg_advisory_xact_lock(@event_key)";
+            var parameter = command.CreateParameter();
+            parameter.ParameterName = "event_key";
+            parameter.Value = eventKey;
+            command.Parameters.Add(parameter);
+            await command.ExecuteNonQueryAsync(cancellationToken);
+        }
+
         var old = await database.InboxReceipts.AsNoTracking()
             .SingleOrDefaultAsync(x => x.EventId == input.EventId, cancellationToken);
         if (old is not null)
