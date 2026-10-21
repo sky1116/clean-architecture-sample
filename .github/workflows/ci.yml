@@ -27,7 +27,9 @@ jobs:
       - name: Publication hygiene
         env:
           PUBLICATION_RESTRICTED_TERMS: ${{ secrets.PUBLICATION_RESTRICTED_TERMS }}
-        run: python3 scripts/check_publication.py
+        run: |
+          python3 scripts/check_publication.py
+          python3 scripts/check_publication.py --self-test
 
   postgres-integration:
     runs-on: ubuntu-latest
