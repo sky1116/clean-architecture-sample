@@ -1,5 +1,6 @@
 using System.Data;
 using Competition.Application.Ports;
+using Competition.Domain.Results;
 using Microsoft.EntityFrameworkCore;
 
 namespace Competition.Infrastructure.Persistence;
@@ -22,12 +23,12 @@ public sealed class PostgresCorrectionGateway(CompetitionDbContext database) : I
         var revisions = await database.Corrections.AsNoTracking().Where(x => x.ResultId == resultId)
             .Select(x => x.Revision).ToListAsync(cancellationToken);
         var latest = revisions.Count == 0 ? 0 : revisions.Max();
-        if (latest != expectedRevision)
+        var next = CorrectionRevisionPolicy.NextRevision(latest, expectedRevision);
+        if (next is null)
         {
             await transaction.RollbackAsync(cancellationToken);
             return new(CorrectionStatus.VersionConflict, latest);
         }
-        var next = checked(latest + 1);
         database.Corrections.Add(new CorrectionRow
         {
             Id = Guid.NewGuid(), CompetitionId = competitionId, ResultId = resultId,
