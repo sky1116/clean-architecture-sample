@@ -224,3 +224,22 @@ python3 scripts/check_publication.py
 
 API 與整合測試包含真實 JWT 授權、實際 HTTP、PostgreSQL 交易、未授權拒絕、只能重送一次、已送達事件不得重送，以及不可刪改的稽核資料。本範例仍不包含正式營運儀表板、審批流程、金鑰輪替或獨立部署驗收。
 
+
+## 架構稽核檢查點：書中原則與程式驗證證據
+
+這是**程式碼與測試的稽核檢查點**，不是宣稱已逐頁證明整本書、正式部署或未來所有修改皆百分之百合規。章節對照用來解釋設計理念，並非引用書籍原文，也不代表書中要求特定套件與慣用寫法。
+
+| 《Clean Architecture》概念 | 對應程式 | 實際驗證內容 |
+| --- | --- | --- |
+| Dependency Rule（第 22 章） | `Competition.Domain`、`Application`、`Adapters`、`Infrastructure`、`Web` | `ProjectGraphPolicy` 核對正式專案的**完整引用圖**與未知專案；負向測試真的插入違規引用或內圈套件，並交給**相同檢查器**處理；另外檢查編譯後內圈 Assembly 引用。 |
+| Entities／核心業務規則（第 20 章） | `Competition`、`RankingPolicy`、`ReceivedResultPolicy`、`CorrectionRevisionPolicy` | Domain 不依賴資料庫或 Web；測試涵蓋競賽期間、分數、排名及版本轉移。更正版本是否可推進由 Domain 決定，不由 PostgreSQL 另寫一套政策。 |
+| Use Cases 與依賴反轉（第 22 章） | `UseCases/*`、`Ports/*` | Interactor 依賴 Application 自身定義的 Port／Boundary 與 Domain；架構測試自動發現各 Input／Output Boundary，新增 Use Case 不應悄悄避開檢查。 |
+| Controller → Input Boundary（第 22 章） | `CompetitionController`、`Program.cs` | Controller 呼叫輸入介面，不直接依賴具體 Interactor；HTTP 與 JWT 身分轉換仍在外圈。 |
+| Output Boundary → Presenter → View Model（第 23 章） | `RestPresenter`、`ApiViewModel` | 反射驗證 Input／Output DTO 不攜帶 Domain Entity 或 EF 資料列，且外圈 Presenter 實作正式宣告的所有輸出介面。 |
+| Database／Framework 為細節（第 30–32 章） | `Postgres*Gateway`、`CompetitionDbContext`、`Migrations/*` | EF Core／Npgsql 留在 Infrastructure；真正 PostgreSQL 整合測試驗證原子性、並發、Inbox／Outbox、Migration 升級。 |
+| Main Component／Test Boundary（第 26、28 章） | `Program.cs`、測試專案與 GitHub CI | 最外圈 Web 負責組裝具體類別；Domain、Use Case、架構、HTTP 與 PostgreSQL 在不同測試層驗證。 |
+
+**本次找到並修正的行為落差：** 已接受過的成績及報名必須先做冪等查詢，不能因現在已截止就拒絕查回原決策。完全相同的已接受成績即使證據過期也只讀回既有結果；過期的新請求、同一鍵卻不同內容的請求仍被拒絕。真正新增成績的 PostgreSQL 交易仍會重新確認 Domain 的競賽期間與報名資格，並由 Use Case／真實 HTTP 測試覆蓋。
+
+**驗證邊界：** 目前檢查專案 XML、編譯後 Assembly 依賴、Boundary 名稱與 DTO 結構；不能把這些測試說成已窮盡所有 MSBuild Import、反射動態載入、部署機密管理或書籍全文逐頁驗證，也不代表遊戲真實性、跨服務 Exactly-once 或資料庫 Commit 瞬間截止的保證。**PR 在獨立 Review 前仍維持 Draft；CI PASS 是特定版本的證據，不是無條件架構簽核。**
+

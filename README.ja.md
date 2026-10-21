@@ -224,3 +224,22 @@ Inbox の訂正リビジョン規則はフレームワーク非依存の **Domai
 
 実際の JWT/HTTP/PostgreSQL テストで認可拒否、一回だけの再送、配信済みイベントの保護、監査記録を確認しています。本番運用ダッシュボード、承認ワークフロー、鍵のローテーション、独立デプロイの検証は含みません。
 
+
+## アーキテクチャ監査チェックポイント：書籍の原則と実際の検証
+
+これは**ソースコードとテストの監査チェックポイント**であり、書籍全文・本番デプロイ・将来の全変更を完全認証したという主張ではありません。章番号は設計意図との対応であり、書籍の原文引用や特定ライブラリの採用義務ではありません。
+
+| Clean Architecture の考え方 | 対応コード | 実際に検証すること |
+| --- | --- | --- |
+| Dependency Rule（第 22 章） | `Competition.Domain`、`Application`、`Adapters`、`Infrastructure`、`Web` | `ProjectGraphPolicy` が許可された参照グラフ全体と未知のプロジェクトを検証します。実際にプロジェクト参照／内側層のパッケージを改変した**負の対照**を同じ検証器に与え、さらにコンパイル済み内側 Assembly の参照を検査します。 |
+| Entities／ビジネス規則（第 20 章） | `Competition`、`RankingPolicy`、`ReceivedResultPolicy`、`CorrectionRevisionPolicy` | Domain は Web・DB に依存せず、期間、得点、ランキングと訂正リビジョンを Domain テストで確認します。PostgreSQL 側に別の業務バージョンルールを作りません。 |
+| Use Cases／依存性逆転（第 22 章） | `UseCases/*`、`Ports/*` | Interactor は Application が所有するインターフェイスと Domain に依存します。Input／Output Boundary を自動検出し、新規契約が検証から漏れないようにします。 |
+| Controller → Input Boundary（第 22 章） | `CompetitionController`、`Program.cs` | Controller は具象 Interactor ではなく入力インターフェイスを呼び、HTTP／JWT は外側で変換します。 |
+| Output Boundary → Presenter → View Model（第 23 章） | `RestPresenter`、`ApiViewModel` | 入出力 DTO が Domain Entity や EF Row を公開しないこと、および外側の Presenter が出力インターフェイスを実装することを検証します。 |
+| Database／Framework は詳細（第 30–32 章） | `Postgres*Gateway`、`CompetitionDbContext`、`Migrations/*` | EF Core と Npgsql は外側の Infrastructure に保持します。実際の PostgreSQL テストで原子性、競合、Inbox／Outbox と Migration を検証します。 |
+| Main Component／Test Boundary（第 26・28 章） | `Program.cs`、テスト群と CI | 外側の Web が依存オブジェクトを組み立て、Domain／Use Case／アーキテクチャ／HTTP／DB を分離して検証します。 |
+
+**監査で発見し修正した動作の差異：** 既に承認済みの結果や参加登録は、現在の締切判定より前に冪等検索すべきです。同じ証拠・同じ要求キーの承認済み結果は証明期限が切れた後も読み戻せますが、新規の期限切れ提出や同じキーに異なる本文を付けた要求は拒否されます。新規書き込みでは PostgreSQL トランザクション内で Domain の期間・参加資格を再確認します。Use Case と実際の HTTP テストでこの区別を検証します。
+
+**証拠の限界：** プロジェクト XML、コンパイル済み Assembly、Boundary 名称、DTO の形状を検査しています。ただし、あらゆる MSBuild Import、動的ロード、運用上の秘密管理、書籍全文との逐語的整合性まで証明するものではありません。また、ゲームの実成績、分散 Exactly-once、DB Commit 時刻による厳密な締切を保証しません。**独立した最終 Review の前に PR を Draft から変更せず、CI PASS を無条件の認定と扱いません。**
+

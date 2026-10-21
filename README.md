@@ -220,3 +220,22 @@ The Inbox correction-revision transition has been moved into the framework-indep
 
 The admin API and PostgreSQL tests use verified test JWTs, real routing, real transactions, denial of unauthorized callers, one-time replay, published-event safeguards and durable audit records. An operational dashboard, approval workflow, key rotation and external production deployment remain outside the sample.
 
+
+## Architecture audit checkpoint — book principle versus verified implementation
+
+This is a **code-and-test audit checkpoint**, not a statement that a book, a real infrastructure deployment or all future modifications have been exhaustively certified. Chapter references are design correspondences to Martin's book, not quotations or claims that the book mandates these packages or programming conventions.
+
+| Book concept | Source location | What this repository actually checks |
+| --- | --- | --- |
+| Dependency Rule (Ch. 22) | `Competition.Domain`, `Competition.Application`, `Competition.Adapters`, `Competition.Infrastructure`, `Competition.Web` | `ProjectGraphPolicy` checks the exact allowed project-reference graph and unexpected source projects; tests inject an actual forbidden project reference and an inner-layer package into the **same validator**. Compiled inner assemblies are also inspected for outer references. |
+| Entities and enterprise policy (Ch. 20) | `Competition`, `RankingPolicy`, `ReceivedResultPolicy`, `CorrectionRevisionPolicy` | Business rules live in the framework-free Domain project; Domain tests cover ranking, windows, score bounds, and revision transitions. PostgreSQL gateways invoke Domain rules rather than creating separate correction-version policies. |
+| Application Use Cases and inversion (Ch. 22) | `UseCases/*`, `Ports/*` | Interactors depend on inward, application-owned interfaces and Domain; test discovery checks **all** named input/output boundaries and flags new contracts left out of verification. |
+| Controller → Input Boundary (Ch. 22) | `CompetitionController`, `Program.cs` | The Controller delegates to input interfaces rather than concrete interactors. HTTP endpoints translate transport data and validated identities in the outer Web driver. |
+| Output Boundary → Presenter → View Model (Ch. 23) | `RestPresenter`, `ApiViewModel` | Reflective contract tests reject Domain entities or persistence rows in input/output DTOs, and check that the adapter-owned Presenter implements every declared output interface. |
+| Database and framework detail (Chs. 30–32) | `Postgres*Gateway`, `CompetitionDbContext`, `Migrations/*` | EF Core/Npgsql live in the outer Infrastructure project; actual PostgreSQL tests check atomic receipts, concurrent updates, Inbox/Outbox and schema upgrades. |
+| Main component and test boundary (Chs. 26, 28) | `Program.cs`, `Competition.*.Tests`, CI | The Web application composes implementations. HTTP TestServer, domain, application, architecture and PostgreSQL tests run as separate CI gates. |
+
+**Behavioral correction found during audit:** a prior result or registration is now looked up before time-window validation. An exact accepted result replay is read-only even if the proof has since expired; a fresh late request or the same request key with different content remains rejected. The PostgreSQL write transaction still checks the Domain window and enrollment for **new** results. This separation is covered by use-case and real-HTTP tests.
+
+**Honest gate scope:** Direct project XML, compiled assembly references, discovered boundary names and DTO structures are tested; these are **not** an exhaustive static analysis of arbitrary MSBuild imports, reflection/dynamic assembly loads, secret handling, deployment behavior or the complete text of the book. The example also does not prove gameplay authenticity, exactly-once cross-service delivery, or an exact database-commit-time cutoff. The draft PR must be independently reviewed before merge; green CI is evidence for the checked revision, **not unconditional architectural sign-off**.
+
