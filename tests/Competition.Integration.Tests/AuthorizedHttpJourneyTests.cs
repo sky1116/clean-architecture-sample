@@ -186,6 +186,41 @@ public sealed class AuthorizedHttpJourneyTests : IAsyncLifetime
         using var replayData = await ReadJsonAsync(replay);
         Assert.Equal(resultId, replayData.RootElement.GetProperty("data").GetProperty("resultId").GetGuid());
 
+        // The exact previously accepted request remains a read-only replay AFTER the
+        // competition AND signed proof have expired. A new request must be denied.
+        _clock.Current = starts.AddHours(3);
+        using (var lateReplay = await SubmitAsync())
+        {
+            Assert.Equal(HttpStatusCode.OK, lateReplay.StatusCode);
+            using var previous = await ReadJsonAsync(lateReplay);
+            Assert.Equal(resultId, previous.RootElement.GetProperty("data")
+                .GetProperty("resultId").GetGuid());
+        }
+        using (var changed = new HttpRequestMessage(HttpMethod.Post,
+                   $"/api/competitions/{id}/results"))
+        {
+            changed.Headers.TryAddWithoutValidation("Idempotency-Key", "same-submission-0001");
+            changed.Content = JsonContent.Create(new { OpaqueEvidence = "different-proof" });
+            using var conflicting = await client.SendAsync(changed);
+            Assert.Equal(HttpStatusCode.Conflict, conflicting.StatusCode);
+        }
+        using (var newKey = new HttpRequestMessage(HttpMethod.Post,
+                   $"/api/competitions/{id}/results"))
+        {
+            newKey.Headers.TryAddWithoutValidation("Idempotency-Key", "different-new-request");
+            newKey.Content = JsonContent.Create(new { OpaqueEvidence = proof });
+            using var lateNewSubmission = await client.SendAsync(newKey);
+            Assert.Equal(HttpStatusCode.Conflict, lateNewSubmission.StatusCode);
+        }
+        using (var previousEnrollment = await client.PostAsJsonAsync(
+                   $"/api/competitions/{id}/participants", new { }))
+        {
+            Assert.Equal(HttpStatusCode.Conflict, previousEnrollment.StatusCode);
+            using var enrolled = await ReadJsonAsync(previousEnrollment);
+            Assert.Equal("registration.already_registered",
+                enrolled.RootElement.GetProperty("code").GetString());
+        }
+
         using var leaderboard = await client.GetAsync($"/api/competitions/{id}/leaderboard");
         Assert.Equal(HttpStatusCode.OK, leaderboard.StatusCode);
         using var rankingData = await ReadJsonAsync(leaderboard);
