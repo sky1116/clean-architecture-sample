@@ -42,6 +42,22 @@ public sealed class SubmitResultInteractor(
             return;
         }
 
+        // Replays are read-only. Verify that both the key and raw proof fingerprint
+        // match a previously trusted, committed decision BEFORE applying today's
+        // clock window or an already-expired evidence receipt.
+        var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(
+            $"{input.CompetitionId:N}:{input.AuthenticatedParticipantId:N}:{input.OpaqueEvidence}")));
+        var existing = await results.FindExistingAsync(input.CompetitionId,
+            input.AuthenticatedParticipantId, input.IdempotencyKey, fingerprint,
+            cancellationToken);
+        if (existing is not null)
+        {
+            output.Present(existing.Status == ResultWriteStatus.Replayed
+                ? new("result.replayed", existing.Result?.Id, existing.Result?.Points)
+                : new("result.idempotency_conflict"));
+            return;
+        }
+
         var competition = await competitions.FindAsync(input.CompetitionId, cancellationToken);
         if (competition is null)
         {
@@ -80,9 +96,6 @@ public sealed class SubmitResultInteractor(
 
         var verifiedResult = VerifiedResult.Create(ids.Next(), input.CompetitionId,
             input.AuthenticatedParticipantId, verified.Points, acceptedAt, verified.EvidenceId);
-        var fingerprintBytes = SHA256.HashData(Encoding.UTF8.GetBytes(
-            $"{input.CompetitionId:N}:{input.AuthenticatedParticipantId:N}:{input.OpaqueEvidence}"));
-        var fingerprint = Convert.ToHexString(fingerprintBytes);
         var written = await results.AppendAsync(verifiedResult, input.IdempotencyKey, fingerprint, cancellationToken);
         output.Present(written.Status switch
         {

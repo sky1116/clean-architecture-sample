@@ -44,6 +44,15 @@ public sealed class SubmitResultTests
     {
         public int Writes { get; private set; }
         public ResultWriteStatus Status { get; init; } = ResultWriteStatus.Created;
+        public ResultWriteOutcome? Existing { get; set; }
+        public int LookupCalls { get; private set; }
+        public Task<ResultWriteOutcome?> FindExistingAsync(Guid competitionId,
+            Guid participantId, string key, string fingerprint,
+            CancellationToken cancellationToken)
+        {
+            LookupCalls++;
+            return Task.FromResult(Existing);
+        }
         public Task<ResultWriteOutcome> AppendAsync(VerifiedResult proposed, string key, string fingerprint,
             CancellationToken cancellationToken)
         {
@@ -137,6 +146,42 @@ public sealed class SubmitResultTests
             "window-race-request", "trusted-proof"), presenter, CancellationToken.None);
 
         Assert.Equal("competition.not_active", presenter.Response?.Code);
+        Assert.Equal(0, gateway.Writes);
+    }
+
+    [Fact]
+    public async Task A_previously_accepted_exact_replay_short_circuits_current_clock_and_proof_validation()
+    {
+        var gateway = new Results
+        {
+            Existing = new ResultWriteOutcome(ResultWriteStatus.Replayed,
+                VerifiedResult.Create(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+                    45, Start, "original"))
+        };
+        var presenter = new Presenter();
+        var useCase = new SubmitResultInteractor(new Competitions(), new Enrollments(),
+            new Evidence { IsValid = false }, gateway, new AdvancingClock(), new Ids());
+        await useCase.ExecuteAsync(new SubmitResultInput(Guid.NewGuid(), Guid.NewGuid(),
+            "request-1234", "same-previous-proof"), presenter, CancellationToken.None);
+        Assert.Equal("result.replayed", presenter.Response?.Code);
+        Assert.Equal(45, presenter.Response?.VerifiedPoints);
+        Assert.Equal(1, gateway.LookupCalls);
+        Assert.Equal(0, gateway.Writes);
+    }
+
+    [Fact]
+    public async Task Existing_key_with_a_different_fingerprint_is_rejected_without_reverification_or_write()
+    {
+        var gateway = new Results
+        {
+            Existing = new ResultWriteOutcome(ResultWriteStatus.Conflict, null)
+        };
+        var presenter = new Presenter();
+        await new SubmitResultInteractor(new Competitions(), new Enrollments(),
+            new Evidence { IsValid = false }, gateway, new Clock(), new Ids())
+            .ExecuteAsync(new SubmitResultInput(Guid.NewGuid(), Guid.NewGuid(),
+                "request-1234", "altered-proof"), presenter, CancellationToken.None);
+        Assert.Equal("result.idempotency_conflict", presenter.Response?.Code);
         Assert.Equal(0, gateway.Writes);
     }
 

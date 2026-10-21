@@ -34,6 +34,14 @@ public sealed record ResultWriteOutcome(ResultWriteStatus Status, VerifiedResult
 
 public interface IResultGateway
 {
+    /// <summary>
+    /// Read-only lookup for an already accepted request. A matching persisted proof fingerprint
+    /// remains safely replayable even after the original evidence has expired.
+    /// Null means no prior request; conflict means the same key was used with different content.
+    /// </summary>
+    Task<ResultWriteOutcome?> FindExistingAsync(Guid competitionId, Guid participantId,
+        string idempotencyKey, string requestFingerprint, CancellationToken cancellationToken);
+
     /// <summary>Atomic acceptance, idempotency receipt and append-only audit record in one transaction.</summary>
     Task<ResultWriteOutcome> AppendAsync(VerifiedResult proposed, string idempotencyKey,
         string requestFingerprint, CancellationToken cancellationToken);

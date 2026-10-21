@@ -94,6 +94,18 @@ public sealed class PostgresEnrollmentGateway(CompetitionDbContext database, IUt
 
 public sealed class PostgresResultGateway(CompetitionDbContext database, IUtcClock clock) : IResultGateway
 {
+    public async Task<ResultWriteOutcome?> FindExistingAsync(Guid competitionId,
+        Guid participantId, string idempotencyKey, string requestFingerprint,
+        CancellationToken cancellationToken)
+    {
+        var receipt = await database.RequestReceipts.AsNoTracking().SingleOrDefaultAsync(
+            row => row.CompetitionId == competitionId && row.ParticipantId == participantId
+                && row.IdempotencyKey == idempotencyKey, cancellationToken);
+        return receipt is null
+            ? null
+            : await ExistingReceiptAsync(receipt, requestFingerprint, cancellationToken);
+    }
+
     public async Task<ResultWriteOutcome> AppendAsync(VerifiedResult proposed, string idempotencyKey,
         string requestFingerprint, CancellationToken cancellationToken)
     {
