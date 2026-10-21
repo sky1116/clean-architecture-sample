@@ -160,7 +160,18 @@ public sealed class PostgresResultGateway(CompetitionDbContext database, IUtcClo
         if (sameEvidence)
         {
             await transaction.RollbackAsync(cancellationToken);
-            return new(ResultWriteStatus.Conflict, null);
+            // Another transaction may have committed the identical evidence
+            // BETWEEN our first receipt lookup and this evidence lookup.
+            // Resolve the committed receipt after rollback before deciding
+            // that the request is a conflict. A matching key/fingerprint
+            // must be classified as a harmless read-only replay.
+            var winner = await database.RequestReceipts.AsNoTracking().SingleOrDefaultAsync(
+                x => x.CompetitionId == proposed.CompetitionId &&
+                    x.ParticipantId == proposed.ParticipantId &&
+                    x.IdempotencyKey == idempotencyKey, cancellationToken);
+            return winner is null
+                ? new(ResultWriteStatus.Conflict, null)
+                : await ExistingReceiptAsync(winner, requestFingerprint, cancellationToken);
         }
 
         database.Results.Add(new ResultRow {
