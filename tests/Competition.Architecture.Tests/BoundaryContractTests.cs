@@ -60,6 +60,46 @@ public sealed class BoundaryContractTests
     }
 
     [Fact]
+    public void Newly_added_use_case_boundaries_must_not_escape_the_verifier()
+    {
+        var types = typeof(SubmitResultInput).Assembly.GetTypes();
+        var discoveredInputs = types.Where(t => t.IsInterface &&
+            t.Name.EndsWith("InputBoundary", StringComparison.Ordinal)).ToHashSet();
+        var discoveredOutputs = types.Where(t => t.IsInterface &&
+            t.Name.EndsWith("OutputBoundary", StringComparison.Ordinal)).ToHashSet();
+
+        Assert.True(discoveredInputs.SetEquals(InputBoundaries),
+            "New Input Boundary needs an explicit contract verification entry.");
+        Assert.True(discoveredOutputs.SetEquals(OutputBoundaries),
+            "New Output Boundary needs an explicit contract verification entry.");
+    }
+
+    [Fact]
+    public void Every_interactor_constructor_must_depend_only_on_inward_interfaces()
+    {
+        var interactors = typeof(SubmitResultInput).Assembly.GetTypes()
+            .Where(t => t.IsClass && !t.IsAbstract &&
+                t.Name.EndsWith("Interactor", StringComparison.Ordinal))
+            .ToArray();
+        Assert.Equal(InputBoundaries.Length, interactors.Length);
+        foreach (var interactor in interactors)
+        {
+            var constructor = Assert.Single(interactor.GetConstructors());
+            var parameters = constructor.GetParameters().Select(p => p.ParameterType).ToArray();
+            Assert.True(ConstructorDependenciesAreInward(parameters),
+                interactor.Name + " unexpectedly depends on concrete/outer types");
+        }
+
+        // Negative control goes through the same predicate as actual interactors.
+        Assert.False(ConstructorDependenciesAreInward(
+            [typeof(Competition.Infrastructure.Persistence.PostgresResultGateway)]));
+    }
+
+    private static bool ConstructorDependenciesAreInward(IEnumerable<Type> dependencies) =>
+        dependencies.All(type => type.IsInterface &&
+            type.Assembly.GetName().Name == "Competition.Application");
+
+    [Fact]
     public void All_controller_constructor_dependencies_are_input_boundary_interfaces()
     {
         var constructor = Assert.Single(typeof(CompetitionController).GetConstructors());
