@@ -10,7 +10,7 @@
 
 **Merge decision:** once CI for this exact PR head is green and there are no unresolved code-review blockers, the sample is **ready for an owner-reviewed merge**; this does **not** authorize deployment or imply production security certification. External OIDC, an independently deployed webhook receiver, production key management and anti-cheat adjudication are explicitly outside scope.
 
-**Reuse/legal note:** no open-source license is included in this repository; publication and green CI do not grant external users permission to redistribute the code. Licensing remains a separate owner decision, not a missing Clean Architecture layer.
+**License:** This original sample is released under the [MIT License](LICENSE), © 2026 sky1116. You may study, use, modify and redistribute it under the conditions in the license, including retaining the copyright and permission notice. Third-party dependencies retain their own licenses.
 
 
 ## What is demonstrated?
