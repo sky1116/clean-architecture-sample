@@ -250,7 +250,7 @@ API 與整合測試包含真實 JWT 授權、實際 HTTP、PostgreSQL 交易、�
 
 **本次找到並修正的行為落差：** 已接受過的成績及報名必須先做冪等查詢，不能因現在已截止就拒絕查回原決策。完全相同的已接受成績即使證據過期也只讀回既有結果；過期的新請求、同一鍵卻不同內容的請求仍被拒絕。真正新增成績的 PostgreSQL 交易仍會重新確認 Domain 的競賽期間與報名資格，並由 Use Case／真實 HTTP 測試覆蓋。
 
-**驗證邊界：** 目前檢查專案 XML、編譯後 Assembly 依賴、Boundary 名稱與 DTO 結構；不能把這些測試說成已窮盡所有 MSBuild Import、反射動態載入、部署機密管理或書籍全文逐頁驗證，也不代表遊戲真實性、跨服務 Exactly-once 或資料庫 Commit 瞬間截止的保證。**PR 在獨立 Review 前仍維持 Draft；CI PASS 是特定版本的證據，不是無條件架構簽核。**
+**驗證邊界：** 目前檢查專案 XML、編譯後 Assembly 依賴、Boundary 名稱與 DTO 結構；不能把這些測試說成已窮盡所有 MSBuild Import、反射動態載入、部署機密管理或書籍全文逐頁驗證，也不代表遊戲真實性、跨服務 Exactly-once 或資料庫 Commit 瞬間截止的保證。**教學範例通過本次明確驗收後可進入一般 GitHub Code Review，由 Repo 擁有者決定是否合併；CI PASS 只證明特定版本，不代表生產環境合規簽核。**
 
 
 ## 定向安全與故障路徑稽核
@@ -268,5 +268,5 @@ API 與整合測試包含真實 JWT 授權、實際 HTTP、PostgreSQL 交易、�
 
 **CA 職責歸屬：** 身分設定、HTTP／HMAC 驗證與網路傳輸留在外圈；Domain 負責競賽與更正版本業務規則；Use Case 透過自己擁有的 Port 作決策；PostgreSQL 只負責交易、鎖與持久化。這是 Dependency Rule 的應用，**不是宣稱書中規定某種驗證套件或 Exactly-once 技術**。
 
-**驗收限制：** 測試成功只能支持該版本、該條件下實際跑過的案例；不能推論不存在其他 Race Condition、已整合正式 OIDC、具備完整反作弊或可以直接上線。PR 在獨立人工安全與架構 Review 前保持 Draft。
+**驗收限制：** 測試成功只能支持該版本、該條件下實際跑過的案例；不能推論不存在其他 Race Condition、已整合正式 OIDC、具備完整反作弊或可以直接上線。教學範例可進入正常 PR Review；生產環境上線前的獨立安全審查不包含在此次交付。
 
