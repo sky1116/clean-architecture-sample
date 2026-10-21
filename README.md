@@ -4,6 +4,15 @@
 
 > An executable, security-conscious competition, leaderboard and participant-history reference for **Robert C. Martin's Clean Architecture**. Built from scratch for public education. **Not a production-ready anti-cheat service.**
 
+## Delivery decision for this educational sample
+
+**Scope frozen:** this repository is an executable **educational Clean Architecture reference**, not a deployment product. The acceptance gate is the source dependency/boundary tests, Domain/Use Case tests, HTTP and PostgreSQL integration journeys, publication negative controls, all three localized READMEs, and both original diagrams. Future external integrations are not hidden prerequisites for merging this educational example.
+
+**Merge decision:** once CI for this exact PR head is green and there are no unresolved code-review blockers, the sample is **ready for an owner-reviewed merge**; this does **not** authorize deployment or imply production security certification. External OIDC, an independently deployed webhook receiver, production key management and anti-cheat adjudication are explicitly outside scope.
+
+**Reuse/legal note:** no open-source license is included in this repository; publication and green CI do not grant external users permission to redistribute the code. Licensing remains a separate owner decision, not a missing Clean Architecture layer.
+
+
 ## What is demonstrated?
 
 A competition accepts authenticated participants, validates submissions and trusted evidence, records immutable score decisions, computes rankings and preserves personal history. Realistic failure scenarios—invalid input, authorization, duplicate requests, concurrent updates, stale projections and operational failures—are first-class design requirements.
@@ -66,13 +75,13 @@ Quality gates cover:
 - PostgreSQL integration tests using an actual container for uniqueness, transactions and concurrency.
 - End-to-end request/response cases using authenticated identities.
 - Negative controls proving the verifiers themselves detect deliberately invalid changes.
-- A publication scan that rejects configured prohibited identifiers without committing the confidential list.
+- A publication scan using an embedded hashed restricted-term set and an optional externally configured extension; a synthetic negative control proves the scanner flags prohibited text.
 
 Tests are reported honestly. Until a CI run succeeds, this README does **not** claim that build or integration checks have passed.
 
 ## Local development
 
-Requires .NET 10 SDK and Docker for PostgreSQL integration tests. Follow the workflow in `.github/workflows/ci.yml`; run `dotnet test` from the repository root after the solution is established. For a runnable application, supply a PostgreSQL connection string and a real authentication configuration through environment variables; do not commit credentials.
+Requires .NET 10 SDK and Docker for PostgreSQL integration tests. No solution file is required: run each test `.csproj` with the explicit commands below, exactly as `.github/workflows/ci.yml` does. For a runnable application, supply a PostgreSQL connection string and a real authentication configuration through environment variables; do not commit credentials.
 
 ## Book-to-code correspondence
 
