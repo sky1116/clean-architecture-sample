@@ -48,4 +48,25 @@ public sealed class WebStartupValidationTests
     {
         await new WebStartupValidation(Build()).StartAsync(CancellationToken.None);
     }
+    [Theory]
+    [InlineData("http://identity.example")]
+    [InlineData("https://someone:secret@identity.example")]
+    [InlineData("https://identity.example/?access_token=secret")]
+    [InlineData("https://identity.example/#invalid")]
+    [InlineData("not-an-issuer")]
+    public void Unsafe_identity_authorities_are_rejected_without_echoing_values(string input)
+    {
+        var exception = Assert.Throws<InvalidOperationException>(
+            () => WebStartupValidation.ValidateIdentityProvider(input));
+        Assert.DoesNotContain(input, exception.Message);
+    }
+
+    [Theory]
+    [InlineData("https://identity.example")]
+    [InlineData("https://identity.example/tenant/v1")]
+    public void Standard_https_issuers_are_accepted(string input)
+    {
+        WebStartupValidation.ValidateIdentityProvider(input);
+    }
+
 }

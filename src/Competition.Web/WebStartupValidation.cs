@@ -15,6 +15,8 @@ public sealed class WebStartupValidation(IConfiguration configuration) : IHosted
             || string.IsNullOrWhiteSpace(configuration["Authentication:Audience"]))
             throw new InvalidOperationException("OIDC authority and audience must be configured.");
 
+        ValidateIdentityProvider(configuration["Authentication:Authority"]);
+
         _ = ReadSigningKey(configuration);
         if (configuration.GetValue<bool>("Inbox:Enabled"))
             _ = Competition.Infrastructure.Delivery.WebhookSignature.ReadKey(
@@ -23,6 +25,17 @@ public sealed class WebStartupValidation(IConfiguration configuration) : IHosted
             _ = Competition.Infrastructure.Delivery.WebhookSignature.ReadKey(
                 configuration["Outbox:WebhookSigningKeyBase64"]);
         return Task.CompletedTask;
+    }
+
+    public static void ValidateIdentityProvider(string? authority)
+    {
+        // Authentication establishes identity. Reject downgrade, embedded credentials
+        // and URL parameters at startup; do not log untrusted configuration values.
+        if (!Uri.TryCreate(authority, UriKind.Absolute, out var uri) ||
+            uri.Scheme != Uri.UriSchemeHttps || !string.IsNullOrEmpty(uri.UserInfo) ||
+            !string.IsNullOrEmpty(uri.Query) || !string.IsNullOrEmpty(uri.Fragment))
+            throw new InvalidOperationException(
+                "OIDC authority must be an absolute HTTPS issuer URL without embedded credentials or parameters.");
     }
 
     public Task StopAsync(CancellationToken cancellationToken) => Task.CompletedTask;
