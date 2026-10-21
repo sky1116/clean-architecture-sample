@@ -32,14 +32,33 @@ public sealed class HttpOutboxEventSink(HttpClient client, Uri destination, byte
         request.Headers.TryAddWithoutValidation("Idempotency-Key", delivery.Id.ToString("N"));
         request.Headers.TryAddWithoutValidation("X-Event-Id", delivery.Id.ToString("D"));
         request.Headers.TryAddWithoutValidation("X-Event-Type", delivery.EventType);
-        using var payload = JsonDocument.Parse(delivery.Payload);
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(new
+        // Persisted events can be corrupted by operational mistakes or schema drift.
+        // Unsupported/invalid messages are NOT transient network failures and must
+        // never hit the remote endpoint or be retried as a temporary timeout.
+        if (delivery.EventType is not ("competition.result.accepted.v1"
+            or "competition.result.corrected.v1"))
+            return DeliveryResult.PermanentFailure;
+
+        byte[] bytes;
+        try
         {
-            EventId = delivery.Id,
-            delivery.CompetitionId,
-            delivery.EventType,
-            Payload = payload.RootElement
-        });
+            using var payload = JsonDocument.Parse(delivery.Payload,
+                new JsonDocumentOptions { MaxDepth = 8 });
+            if (payload.RootElement.ValueKind != JsonValueKind.Object)
+                return DeliveryResult.PermanentFailure;
+            bytes = JsonSerializer.SerializeToUtf8Bytes(new
+            {
+                EventId = delivery.Id,
+                delivery.CompetitionId,
+                delivery.EventType,
+                Payload = payload.RootElement
+            });
+        }
+        catch (JsonException) { return DeliveryResult.PermanentFailure; }
+
+        // Inbound sample rejects messages exceeding this exact wire-size limit.
+        if (bytes.Length > 8192)
+            return DeliveryResult.PermanentFailure;
         // Sign the exact bytes actually sent, not the in-memory object.
         request.Headers.TryAddWithoutValidation("X-Webhook-Signature",
             WebhookSignature.Create(bytes, signingKey));

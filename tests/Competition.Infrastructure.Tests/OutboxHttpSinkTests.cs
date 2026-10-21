@@ -73,4 +73,88 @@ public sealed class OutboxHttpSinkTests
         await Assert.ThrowsAsync<InvalidOperationException>(
             () => sender.SendAsync(Delivery(), CancellationToken.None));
     }
+    private sealed class NeverSendHandler : HttpMessageHandler
+    {
+        public int Calls { get; private set; }
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+            CancellationToken cancellationToken)
+        {
+            Calls++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Accepted));
+        }
+    }
+
+    [Theory]
+    [InlineData("{not valid json")]
+    [InlineData("[]")]
+    [InlineData("null")]
+    public async Task Malformed_or_non_object_persisted_payload_fails_permanently_before_network(
+        string payload)
+    {
+        var handler = new NeverSendHandler();
+        using var client = new HttpClient(handler);
+        var sender = new HttpOutboxEventSink(client,
+            new Uri("https://event-receiver.example/events"), SigningKey);
+        var broken = Delivery() with { Payload = payload };
+        Assert.Equal(DeliveryResult.PermanentFailure,
+            await sender.SendAsync(broken, CancellationToken.None));
+        Assert.Equal(0, handler.Calls);
+    }
+
+    [Fact]
+    public async Task Unexpected_event_type_must_not_be_sent_or_signed()
+    {
+        var handler = new NeverSendHandler();
+        using var client = new HttpClient(handler);
+        var sender = new HttpOutboxEventSink(client,
+            new Uri("https://event-receiver.example/events"), SigningKey);
+        Assert.Equal(DeliveryResult.PermanentFailure,
+            await sender.SendAsync(Delivery() with { EventType = "unsupported.v2" },
+                CancellationToken.None));
+        Assert.Equal(0, handler.Calls);
+    }
+
+    [Fact]
+    public async Task Oversized_signed_wire_envelope_is_not_sent_to_a_known_limited_receiver()
+    {
+        var handler = new NeverSendHandler();
+        using var client = new HttpClient(handler);
+        var sender = new HttpOutboxEventSink(client,
+            new Uri("https://event-receiver.example/events"), SigningKey);
+        var eventData = Delivery() with { Payload = "{\\"Data\\":\\"" +
+            new string('x', 8192) + "\\"}" };
+        Assert.Equal(DeliveryResult.PermanentFailure,
+            await sender.SendAsync(eventData, CancellationToken.None));
+        Assert.Equal(0, handler.Calls);
+    }
+
+    private sealed class NetworkFailureHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+            CancellationToken cancellationToken) =>
+            throw new HttpRequestException("private transport endpoint details");
+    }
+
+    [Fact]
+    public async Task Network_failure_is_retryable_without_exposing_exception_details()
+    {
+        using var client = new HttpClient(new NetworkFailureHandler());
+        var sender = new HttpOutboxEventSink(client,
+            new Uri("https://event-receiver.example/events"), SigningKey);
+        Assert.Equal(DeliveryResult.RetryableFailure,
+            await sender.SendAsync(Delivery(), CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task Caller_cancellation_is_not_misclassified_as_a_retryable_delivery()
+    {
+        using var client = new HttpClient(new NeverSendHandler());
+        var sender = new HttpOutboxEventSink(client,
+            new Uri("https://event-receiver.example/events"), SigningKey);
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => sender.SendAsync(Delivery(), canceled.Token));
+    }
+
 }
