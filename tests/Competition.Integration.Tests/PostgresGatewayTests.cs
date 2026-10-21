@@ -119,24 +119,30 @@ public sealed class PostgresGatewayTests : IAsyncLifetime
     [Fact]
     public async Task Concurrent_duplicate_submissions_have_only_one_committed_decision()
     {
-        var contestId = Guid.NewGuid();
-        var actorId = Guid.NewGuid();
-        await SeedContestAsync(contestId, actorId);
-        async Task<ResultWriteOutcome> Write()
+        // Probe several independent submission races to exercise both interleavings:
+        // receipt lookup before and after the competing commit.
+        for (var iteration = 0; iteration < 8; iteration++)
         {
-            await using var context = Context();
-            var candidate = VerifiedResult.Create(Guid.NewGuid(), contestId, actorId, 12, Now, "proof-parallel");
-            return await new PostgresResultGateway(context, new FixedClock()).AppendAsync(
-                candidate, "parallel-key", "fingerprint", CancellationToken.None);
-        }
+            var contestId = Guid.NewGuid();
+            var actorId = Guid.NewGuid();
+            await SeedContestAsync(contestId, actorId);
+            async Task<ResultWriteOutcome> Write()
+            {
+                await using var context = Context();
+                var candidate = VerifiedResult.Create(Guid.NewGuid(), contestId, actorId,
+                    12, Now, "proof-parallel");
+                return await new PostgresResultGateway(context, new FixedClock()).AppendAsync(
+                    candidate, "parallel-key", "fingerprint", CancellationToken.None);
+            }
 
-        var completed = await Task.WhenAll(Task.Run(Write), Task.Run(Write));
-        Assert.Single(completed, x => x.Status == ResultWriteStatus.Created);
-        Assert.Single(completed, x => x.Status == ResultWriteStatus.Replayed);
-        await using var verify = Context();
-        Assert.Equal(1, await verify.Results.CountAsync());
-        Assert.Equal(1, await verify.RequestReceipts.CountAsync());
-        Assert.Equal(1, await verify.AuditEntries.CountAsync());
+            var completed = await Task.WhenAll(Task.Run(Write), Task.Run(Write));
+            Assert.Single(completed, x => x.Status == ResultWriteStatus.Created);
+            Assert.Single(completed, x => x.Status == ResultWriteStatus.Replayed);
+            await using var verify = Context();
+            Assert.Equal(1, await verify.Results.CountAsync(x => x.CompetitionId == contestId));
+            Assert.Equal(1, await verify.RequestReceipts.CountAsync(x => x.CompetitionId == contestId));
+            Assert.Equal(1, await verify.AuditEntries.CountAsync(x => x.CompetitionId == contestId));
+        }
     }
 
     [Fact]
