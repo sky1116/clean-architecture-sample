@@ -96,7 +96,8 @@ public sealed class BoundaryContractTests
         if (type.Assembly != typeof(SubmitResultInput).Assembly ||
             type.Namespace != typeof(SubmitResultInput).Namespace ||
             !type.IsClass || !type.IsSealed ||
-            type.GetMethod("<Clone>$", BindingFlags.Instance | BindingFlags.NonPublic) is null)
+            type.GetMethod("<Clone>$",
+                BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic) is null)
             return false;
 
         var props = type.GetProperties(BindingFlags.Public | BindingFlags.Instance);

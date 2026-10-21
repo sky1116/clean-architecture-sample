@@ -53,10 +53,12 @@ public sealed class DependencyRuleTests
         var actual = File.ReadAllText(path);
         Assert.Empty(ProjectGraphPolicy.ValidateProjectXml(root, "Competition.Domain", actual));
 
-        var mutated = actual.Replace("</Project>", """
-            <ItemGroup><ProjectReference Include="../Competition.Infrastructure/Competition.Infrastructure.csproj" /></ItemGroup>
-            </Project>
-            """);
+        var document = System.Xml.Linq.XDocument.Parse(actual);
+        document.Root!.Add(new System.Xml.Linq.XElement("ItemGroup",
+            new System.Xml.Linq.XElement("ProjectReference",
+                new System.Xml.Linq.XAttribute("Include",
+                    "../Competition.Infrastructure/Competition.Infrastructure.csproj"))));
+        var mutated = document.ToString();
         Assert.NotEqual(actual, mutated);
         Assert.Contains(ProjectGraphPolicy.ValidateProjectXml(root, "Competition.Domain", mutated),
             problem => problem.Contains("forbidden project reference", StringComparison.Ordinal));
