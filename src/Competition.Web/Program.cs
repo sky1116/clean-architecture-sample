@@ -209,8 +209,10 @@ app.MapPost("/api/integrations/result-events", async (
     const int maximumBytes = 8192;
     if (request.ContentLength > maximumBytes)
         return Results.StatusCode(StatusCodes.Status413PayloadTooLarge);
-    if (request.ContentType is null ||
-        !request.ContentType.StartsWith("application/json", StringComparison.OrdinalIgnoreCase))
+    if (!System.Net.Http.Headers.MediaTypeHeaderValue.TryParse(
+            request.ContentType, out var mediaType) ||
+        !string.Equals(mediaType?.MediaType, "application/json",
+            StringComparison.OrdinalIgnoreCase))
         return Results.StatusCode(StatusCodes.Status415UnsupportedMediaType);
 
     var signatureHeader = request.Headers["X-Webhook-Signature"];

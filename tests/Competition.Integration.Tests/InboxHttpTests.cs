@@ -184,4 +184,49 @@ public sealed class InboxHttpTests : IAsyncLifetime
         using var response = await client.SendAsync(request);
         Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
     }
+    [Theory]
+    [InlineData("application/json-not-really")]
+    [InlineData("text/plain")]
+    [InlineData("application/octet-stream")]
+    public async Task Non_json_content_types_are_rejected_before_a_database_write(string contentType)
+    {
+        await using var factory = new ApiFactory(_connection, true);
+        using var client = factory.CreateClient();
+        var eventId = Guid.NewGuid();
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            "/api/integrations/result-events");
+        request.Content = new ByteArrayContent(Accepted(
+            eventId, Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), 42));
+        request.Content.Headers.TryAddWithoutValidation("Content-Type", contentType);
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.UnsupportedMediaType, response.StatusCode);
+
+        var options = new DbContextOptionsBuilder<CompetitionDbContext>()
+            .UseNpgsql(_connection).Options;
+        await using var db = new CompetitionDbContext(options);
+        Assert.Empty(await db.InboxReceipts.ToListAsync());
+        Assert.Empty(await db.ReceivedResults.ToListAsync());
+    }
+
+    [Fact]
+    public async Task Oversized_chunked_upload_without_content_length_is_rejected()
+    {
+        await using var factory = new ApiFactory(_connection, true);
+        using var client = factory.CreateClient();
+        using var request = new HttpRequestMessage(HttpMethod.Post,
+            "/api/integrations/result-events");
+        request.Content = new StreamContent(new MemoryStream(
+            Enumerable.Repeat((byte)'x', 8193).ToArray()));
+        request.Content.Headers.ContentType =
+            new MediaTypeHeaderValue("application/json");
+        request.Headers.TransferEncodingChunked = true;
+        using var response = await client.SendAsync(request);
+        Assert.Equal(HttpStatusCode.RequestEntityTooLarge, response.StatusCode);
+
+        var options = new DbContextOptionsBuilder<CompetitionDbContext>()
+            .UseNpgsql(_connection).Options;
+        await using var db = new CompetitionDbContext(options);
+        Assert.Empty(await db.InboxReceipts.ToListAsync());
+    }
+
 }
