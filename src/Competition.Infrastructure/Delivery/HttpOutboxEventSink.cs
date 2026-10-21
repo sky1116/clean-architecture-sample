@@ -21,6 +21,7 @@ public sealed class HttpOutboxEventSink(HttpClient client, Uri destination, byte
 {
     public async Task<DeliveryResult> SendAsync(OutboxDelivery delivery, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         if (destination.Scheme != Uri.UriSchemeHttps || !destination.IsAbsoluteUri
             || destination.UserInfo.Length != 0 || !string.IsNullOrEmpty(destination.Fragment))
             throw new InvalidOperationException("Outbox endpoint must be an absolute HTTPS URL without credentials or fragment.");
@@ -68,6 +69,9 @@ public sealed class HttpOutboxEventSink(HttpClient client, Uri destination, byte
         {
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead,
                 cancellationToken);
+            // Even test/custom handlers can ignore a caller's cancellation.
+            // Never acknowledge remote delivery after the caller canceled.
+            cancellationToken.ThrowIfCancellationRequested();
             if (response.IsSuccessStatusCode) return DeliveryResult.Delivered;
             if (response.StatusCode == HttpStatusCode.RequestTimeout || response.StatusCode == HttpStatusCode.TooManyRequests
                 || (int)response.StatusCode >= 500)
